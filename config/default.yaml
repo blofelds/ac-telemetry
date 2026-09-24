@@ -1,0 +1,39 @@
+# Default capture profiles for AC telemetry (Slice 0).
+# Override with AC_TELEMETRY_CONFIG or env vars (see Settings).
+#
+# pi2b: conservative caps for Raspberry Pi 2 Model B (USB 2.0, 1 GB RAM).
+# pi5:  placeholder for the later upgrade path — not tuned yet.
+
+profiles:
+  pi2b:
+    width: 1280
+    height: 720
+    fps: 10
+    # Hard caps (enforced even if device reports higher)
+    max_width: 1280
+    max_height: 720
+    max_fps: 15
+  pi5:
+    width: 1920
+    height: 1080
+    fps: 30
+    max_width: 1920
+    max_height: 1080
+    max_fps: 60
+
+# Active profile name (pi2b | pi5)
+profile: pi2b
+
+# Capture backend: mock | v4l2
+# Use mock until the HDMI capture dongle arrives; switch to v4l2 on the Pi.
+backend: mock
+
+# V4L2 device path (ignored by mock)
+device: /dev/video0
+
+# HTTP bind — 0.0.0.0 is LAN-friendly on the Pi; 127.0.0.1 is fine for local dev
+host: "0.0.0.0"
+port: 8741
+
+# Where session CSV stubs are written
+data_dir: data/sessions
