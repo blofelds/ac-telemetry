@@ -10,6 +10,7 @@ env/
 *.egg-info/
 dist/
 build/
+agent-tools/
 
 # Runtime data (CSV sessions, local overrides)
 data/

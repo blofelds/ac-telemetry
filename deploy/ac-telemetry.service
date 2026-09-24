@@ -1,0 +1,28 @@
+[Unit]
+Description=AC Telemetry capture service (Assetto Corsa PS5 → Pi)
+Documentation=https://github.com/blofelds/ac-telemetry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/ac-telemetry
+Environment=AC_TELEMETRY_BACKEND=v4l2
+Environment=AC_TELEMETRY_PROFILE=pi2b
+Environment=AC_TELEMETRY_DEVICE=/dev/video0
+Environment=AC_TELEMETRY_HOST=0.0.0.0
+Environment=AC_TELEMETRY_PORT=8741
+# Prefer a venv on the Pi so system Python stays clean.
+ExecStart=/opt/ac-telemetry/.venv/bin/ac-telemetry
+Restart=on-failure
+RestartSec=5
+# Capture dongle needs video group access on Raspberry Pi OS.
+SupplementaryGroups=video
+
+# Keep memory modest on Pi 2B (1 GB). Soft limit; tune after measuring.
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
