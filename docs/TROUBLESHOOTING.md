@@ -1,4 +1,4 @@
-# Troubleshooting (Slice 0)
+# Troubleshooting (Slice 1)
 
 ## Service will not start
 
@@ -11,6 +11,12 @@
 - If you passed `--no-capture`, start without that flag.
 - Check logs for capture start errors.
 - Mock backend should always produce frames; if it does not, file a bug.
+
+## Cannot start a session (409)
+
+- Only one session may be open. End the current one from the UI or:
+  `curl -X POST http://127.0.0.1:8741/api/sessions/current/end`
+- After a crash, check `GET /api/sessions` for a leftover `running` row and end by id.
 
 ## V4L2: failed to open device
 
@@ -31,21 +37,22 @@ Common console capture issues (validate before OCR work):
 
 - Hit `GET /metrics` directly; content type should be Prometheus text.
 - `ac_telemetry_up` should be `1` whenever the process is alive.
+- `ac_telemetry_sessions_started_total` increments on each successful `POST /api/sessions`.
 - `last_frame_age_seconds` may be `NaN` until the first frame.
 
 ## CSV missing or only “running” rows
 
 - Default path: `data/sessions/sessions.csv` under the working directory.
-- Stop the process cleanly (SIGINT/SIGTERM) so the stop hook runs.
+- Sessions are created by the API/UI, not by capture start. Start a session from the phone page.
+- End the session from the UI (or API) so a `stopped` row is appended.
 - Ensure the process can create `data/sessions/` (permissions).
 
-## Phone cannot open the UI
+## Phone cannot reach the Pi
 
-- Bind is `0.0.0.0` by default — confirm you are not forcing `127.0.0.1` on the Pi.
-- Same LAN / subnet; no guest-WiFi client isolation.
-- Firewall: allow TCP `8741` if enabled (`ufw` etc.).
-- Auth is not implemented — trusted home LAN only.
+- Confirm bind is `0.0.0.0` (default), not `127.0.0.1`.
+- Same Wi-Fi / LAN as the Pi; try `http://<pi-ip>:8741/`.
+- Firewall on the Pi may block the port.
 
-## Historical fixes
+## Still stuck
 
-None yet. When bugs are fixed, keep a short writeup and link it here (acc-telemetry style).
+- Collect: `GET /health` JSON, last 50 log lines, `v4l2-ctl --list-devices` output (if hardware), and whether mock works on the same host.
