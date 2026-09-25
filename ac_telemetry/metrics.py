@@ -1,4 +1,4 @@
-"""Prometheus metrics for capture health (Slice 0)."""
+"""Prometheus metrics for capture health and session counters."""
 
 from __future__ import annotations
 
@@ -38,8 +38,24 @@ FRAMES_TOTAL = Counter(
     "Total frames captured since process start",
     registry=REGISTRY,
 )
+SESSIONS_STARTED = Counter(
+    "ac_telemetry_sessions_started_total",
+    "Sessions started via API (manual metadata)",
+    registry=REGISTRY,
+)
+SESSIONS_ENDED = Counter(
+    "ac_telemetry_sessions_ended_total",
+    "Sessions ended via API",
+    registry=REGISTRY,
+)
+SESSIONS_OPEN = Gauge(
+    "ac_telemetry_sessions_open",
+    "1 if a session is currently running",
+    registry=REGISTRY,
+)
 
 UP.set(1)
+SESSIONS_OPEN.set(0)
 
 _last_error_count = 0
 _last_frame_count = 0
