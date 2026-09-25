@@ -1,24 +1,24 @@
 # AC Telemetry — Documentation Index
 
-Documentation follows the same **layout philosophy** as [blofelds/acc-telemetry](https://github.com/blofelds/acc-telemetry): explain why, preserve the journey, progressive disclosure. Content is **honest to Slice 0** — stubs grow as features land; we do not invent filler for unbuilt slices.
+Documentation follows the same **layout philosophy** as [blofelds/acc-telemetry](https://github.com/blofelds/acc-telemetry): explain why, preserve the journey, progressive disclosure. Content is **honest to Slice 1** — stubs grow as features land; we do not invent filler for unbuilt slices.
 
 ## Start Here
 
-1. **[../README.md](../README.md)** — Product overview, mock/V4L2 quick start, metrics table
-2. **[USER_GUIDE.md](USER_GUIDE.md)** — Running the service today
+1. **[../README.md](../README.md)** — Product overview, mock/V4L2 quick start, sessions + metrics
+2. **[USER_GUIDE.md](USER_GUIDE.md)** — Running the service and starting sessions today
 3. **[FEATURES.md](FEATURES.md)** — What exists vs what is planned
 
 ## Core documentation
 
 ### For users
 
-- **[USER_GUIDE.md](USER_GUIDE.md)** — Install, mock capture, LAN status UI, CSV location
-- **[FEATURES.md](FEATURES.md)** — Slice 0 capabilities and roadmap boundaries
+- **[USER_GUIDE.md](USER_GUIDE.md)** — Install, mock capture, phone session UI, CSV location
+- **[FEATURES.md](FEATURES.md)** — Slice 0–1 capabilities and roadmap boundaries
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** — Capture, bind, and metrics issues
 
 ### For developers
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Process shape, profiles, capture backends, CSV stub
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Process shape, profiles, session CSV model
 - **[PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)** — Orientation for new contributors
 
 ## Specialized topics
@@ -32,17 +32,18 @@ None yet. Candidates as slices land:
 
 ## Historical / deprecated
 
-Nothing deprecated yet. Future bug-fix writeups and abandoned designs stay here (marked historical), linked from this index — same rule as acc-telemetry.
+Nothing deprecated yet. Slice 0 capture-tied session stubs were replaced by API-owned sessions in Slice 1 (documented in [FEATURES.md](FEATURES.md) journey notes).
 
 ## Quick reference (“I want to…”)
 
 | Goal | Where |
 | --- | --- |
 | Run without hardware | [USER_GUIDE.md](USER_GUIDE.md) · mock backend |
+| Start a session from phone | `http://<host>:8741/` · [USER_GUIDE.md](USER_GUIDE.md) |
+| List sessions via API | `GET /api/sessions` · [FEATURES.md](FEATURES.md) |
 | Scrape Prometheus | `GET /metrics` · [FEATURES.md](FEATURES.md) |
 | Understand Pi 2B caps | [ARCHITECTURE.md](ARCHITECTURE.md) · `pi2b` profile |
 | Install as a service | [`../deploy/ac-telemetry.service`](../deploy/ac-telemetry.service) |
-| See product plan (Project store) | Coordinator docs: plan / product brief (not in this repo yet) |
 
 ## Documentation philosophy
 
