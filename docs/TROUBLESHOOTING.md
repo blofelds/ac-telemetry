@@ -1,5 +1,12 @@
 # Troubleshooting (Slice 0)
 
+## `pip install` stuck on “Building wheel for uvloop”
+
+- **Cause:** Older installs used `uvicorn[standard]`, which depends on uvloop. On ARM (Pi 2B) uvloop often builds from source and can hang for a very long time.
+- **Fix:** Ctrl+C the hung build. Pull a revision that depends on plain `uvicorn` (no `[standard]` in default deps), then `pip install -e .`.
+- Do **not** run `pip install -e ".[standard]"` on the 2B.
+- OpenCV / `.[capture]` is unrelated and also heavy on a 2B — install it only when you need V4L2.
+
 ## Service will not start
 
 - Confirm the venv is activated and `pip install -e .` succeeded.
