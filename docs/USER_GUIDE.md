@@ -18,6 +18,8 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+Default install uses plain uvicorn (no uvloop). On Pi 2B, if an older checkout hung on `Building wheel for uvloop`, Ctrl+C, update the tree, and re-run `pip install -e .`. Skip `.[standard]` on the 2B. `.[capture]` (OpenCV) is separate and heavy — only for real V4L2.
+
 ## Run with mock capture (laptop or Pi, no dongle)
 
 ```bash
