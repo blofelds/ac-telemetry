@@ -10,7 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
+    # Plain uvicorn only: uvicorn[standard] pulls uvloop, which builds from
+    # source on ARM and can hang for a long time on Pi 2B (Ctrl+C the build).
+    "uvicorn>=0.32.0",
     "prometheus-client>=0.21.0",
     "pydantic-settings>=2.6.0",
     "pyyaml>=6.0.2",
@@ -20,6 +22,10 @@ dependencies = [
 capture = [
     "opencv-python-headless>=4.10.0",
     "numpy>=1.26.0",
+]
+# Optional on x86 / faster hosts — do not install on Pi 2B (uvloop compile).
+standard = [
+    "uvicorn[standard]>=0.32.0",
 ]
 dev = [
     "httpx>=0.27.0",
