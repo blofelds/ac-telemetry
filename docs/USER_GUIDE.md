@@ -1,6 +1,6 @@
-# User guide (Slice 0)
+# User guide (Slice 1)
 
-How to run **ac-telemetry** today: prove capture (mock or V4L2), read status, scrape metrics. Lap logging and phone session UX are **not** in this slice.
+How to run **ac-telemetry** today: prove capture (mock or V4L2), create/end driving sessions from a phone, scrape metrics. Lap OCR is **not** in this slice.
 
 ## Requirements
 
@@ -40,12 +40,14 @@ ac-telemetry --host 127.0.0.1
 
 ### What you should see
 
-1. Open `http://127.0.0.1:8741/` — status shows **running**, backend **mock**, FPS near the target.
-2. `GET /health` — JSON with capture fields.
-3. `GET /metrics` — Prometheus text (fps, last frame age, errors).
-4. `data/sessions/sessions.csv` — a **running** row on start; a **stopped** row when the process exits.
+1. Open `http://127.0.0.1:8741/` — phone-friendly session form + capture status.
+2. Enter **track**, **car**, optional **notes** → **Start session**.
+3. **End session** when done; history lists prior runs.
+4. `GET /api/sessions` — JSON history; `GET /health` — capture + current session.
+5. `GET /metrics` — Prometheus text (capture + session counters).
+6. `data/sessions/sessions.csv` — append-only rows (start then stop per id).
 
-Stop with Ctrl+C; the capture thread flushes the session stop row.
+Capture still runs for FPS/health proof. Sessions are **not** created by capture start/stop anymore — you start them from the UI or API.
 
 ## Run with a real capture device (Pi)
 
@@ -60,7 +62,7 @@ ac-telemetry --backend v4l2
 AC_TELEMETRY_BACKEND=v4l2 AC_TELEMETRY_DEVICE=/dev/video0 ac-telemetry
 ```
 
-5. On a phone on the same LAN: `http://<pi-ip>:8741/`.
+5. On a phone on the same LAN: `http://<pi-ip>:8741/` → start a session before you drive.
 
 ### systemd (sketch)
 
@@ -73,38 +75,52 @@ sudo systemctl enable --now ac-telemetry
 
 The Pi user needs membership in the `video` group for `/dev/video*`.
 
-## CSV sessions (stub)
+## Sessions API
+
+```bash
+# Start
+curl -s -X POST http://127.0.0.1:8741/api/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"track":"Monza","car":"Ferrari 488 GT3","notes":"wet practice"}'
+
+# List
+curl -s 'http://127.0.0.1:8741/api/sessions?limit=20'
+
+# End current
+curl -s -X POST http://127.0.0.1:8741/api/sessions/current/end
+```
+
+Only one session may be open at a time. A second `POST /api/sessions` returns **409** until you end the current one.
+
+## CSV sessions
 
 | Column | Meaning |
 | --- | --- |
-| `session_id` | Short id for the capture run |
+| `session_id` | Short id |
 | `started_at` / `ended_at` | UTC ISO timestamps |
-| `backend` / `profile` / `device` | How capture was configured |
-| `width` / `height` / `target_fps` | Negotiated / requested geometry |
-| `frames` / `errors` / `avg_fps` | Filled on stop |
-| `status` | `running` then `stopped` |
+| `track` / `car` / `notes` | Manual metadata from phone/API |
+| `backend` / `profile` / `device` | Capture snapshot (filled when available) |
+| `width` / `height` / `target_fps` | Capture geometry |
+| `frames` / `errors` / `avg_fps` | Snapshot at end (if capture was running) |
+| `status` | `running` or `stopped` |
 
-This is a **stub** for Slice 0 — not lap data. SQLite arrives much later.
+File: `data/sessions/sessions.csv` (or `AC_TELEMETRY_DATA_DIR`). Append-only; last row per `session_id` wins. Slice 0 CSVs without `track`/`car`/`notes` are migrated on next open.
 
-## Configuration knobs
+## Configuration quick reference
 
-Prefer env vars on the Pi so the unit file stays simple:
+| Setting | Env / flag | Default |
+| --- | --- | --- |
+| Profile | `AC_TELEMETRY_PROFILE` | `pi2b` |
+| Backend | `AC_TELEMETRY_BACKEND` / `--backend` | `mock` |
+| Device | `AC_TELEMETRY_DEVICE` | `/dev/video0` |
+| Host / port | `AC_TELEMETRY_HOST` / `--port` | `0.0.0.0` / `8741` |
+| Data dir | `AC_TELEMETRY_DATA_DIR` | `data/sessions` |
 
-```bash
-export AC_TELEMETRY_PROFILE=pi2b
-export AC_TELEMETRY_BACKEND=v4l2
-export AC_TELEMETRY_DEVICE=/dev/video0
-export AC_TELEMETRY_HOST=0.0.0.0
-export AC_TELEMETRY_PORT=8741
-```
+## What this guide does not cover yet
 
-Or edit `config/default.yaml`. Profile `pi5` is a placeholder; do not assume it is tuned.
-
-## What this guide does **not** cover yet
-
-- Creating sessions from the phone (track, car, notes) — Slice 1
-- Lap / sector detection — Slice 2
-- Grafana dashboards — Slice 3+
-- Throttle / brake / speed / gear — Pi 5 path (Slice 4)
+- Lap / sector detection (Slice 2)
+- Grafana dashboards (Slice 3)
+- Driving signals (Slice 4)
+- SQLite (Slice 5)
 
 See [FEATURES.md](FEATURES.md) and [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

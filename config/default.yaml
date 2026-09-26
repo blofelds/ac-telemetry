@@ -35,5 +35,5 @@ device: /dev/video0
 host: "0.0.0.0"
 port: 8741
 
-# Where session CSV stubs are written
+# Where session CSV files are written (API-owned sessions; Slice 1)
 data_dir: data/sessions
