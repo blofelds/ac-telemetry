@@ -26,13 +26,13 @@ def build(settings=None):
     store = SessionStore(settings.data_dir)
     store.ensure()
     capture = CaptureService(settings=settings)
-    capture.set_session_hooks(store.start_session, store.end_session)
+    # Slice 1: sessions are created/ended via the phone API, not capture hooks.
     app = create_app(settings, capture, store)
     return settings, capture, app
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="AC Telemetry Slice 0 service")
+    parser = argparse.ArgumentParser(description="AC Telemetry service")
     parser.add_argument(
         "--config",
         default=None,

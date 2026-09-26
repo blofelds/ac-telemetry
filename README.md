@@ -4,7 +4,7 @@ Live **HDMI capture** telemetry for **Assetto Corsa on PS5**, running headless o
 
 This is **not** a video-file extractor. Sister project [blofelds/acc-telemetry](https://github.com/blofelds/acc-telemetry) analyzes recorded gameplay offline. **ac-telemetry** sits on the Pi, opens a USB UVC capture device, and exposes health, Prometheus metrics, and a LAN status page — building toward live lap logging.
 
-**Current slice: Slice 0 — foundation + capture proof.** No OCR, no lap times, no Grafana yet. CSV session stubs only (SQLite later).
+**Current slice: Slice 1 — session model + manual metadata.** Create/end sessions from a phone-friendly LAN UI (track, car, notes); CSV persistence; history API; Prometheus session counters. No OCR / lap times / Grafana / SQLite yet.
 
 ---
 
@@ -49,8 +49,9 @@ ac-telemetry
 
 Then open:
 
-- Status UI: [http://127.0.0.1:8741/](http://127.0.0.1:8741/)
+- Session UI (phone-friendly): [http://127.0.0.1:8741/](http://127.0.0.1:8741/)
 - Health JSON: [http://127.0.0.1:8741/health](http://127.0.0.1:8741/health)
+- Sessions API: [http://127.0.0.1:8741/api/sessions](http://127.0.0.1:8741/api/sessions)
 - Prometheus: [http://127.0.0.1:8741/metrics](http://127.0.0.1:8741/metrics)
 
 Override bind for localhost-only:
@@ -59,7 +60,7 @@ Override bind for localhost-only:
 ac-telemetry --host 127.0.0.1 --port 8741
 ```
 
-Session rows append to `data/sessions/sessions.csv` on capture start/stop.
+Start a session from the UI (or `POST /api/sessions` with `track` / `car` / `notes`). Rows append to `data/sessions/sessions.csv`. Capture still runs for health/FPS; it no longer auto-creates sessions.
 
 ### Raspberry Pi 2B install notes
 
@@ -104,15 +105,16 @@ A systemd unit sketch lives at [`deploy/ac-telemetry.service`](deploy/ac-telemet
 ```
 ac_telemetry/
   capture/     # Mock + V4L2/OpenCV frame loop (profile-aware)
-  api/         # /health, /metrics, /api/status
-  store/       # CSV session stub writers
-  web/         # Minimal LAN status page
+  api/         # /health, /metrics, /api/sessions, /api/status
+  store/       # CSV session writers (track/car/notes)
+  web/         # Phone-friendly session + status page
   settings.py  # YAML + env config (pi2b / pi5 profiles)
 config/
   default.yaml
 deploy/
   ac-telemetry.service
-docs/          # Index + core stubs (grow with later slices)
+docs/          # Index + core guides
+tests/         # Smoke tests for session API
 ```
 
 ---
@@ -143,6 +145,9 @@ docs/          # Index + core stubs (grow with later slices)
 | `ac_telemetry_last_frame_age_seconds` | Age of last good frame |
 | `ac_telemetry_capture_errors_total` | Error counter |
 | `ac_telemetry_frames_total` | Frames since process start |
+| `ac_telemetry_sessions_started_total` | Sessions started via API |
+| `ac_telemetry_sessions_ended_total` | Sessions ended via API |
+| `ac_telemetry_sessions_open` | 1 if a session is running |
 
 ---
 
@@ -156,15 +161,27 @@ docs/          # Index + core stubs (grow with later slices)
 
 ---
 
+## Sessions API (Slice 1)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/sessions` | Start session (`track`, `car`, `notes`) |
+| `POST` | `/api/sessions/{id}/end` | End session |
+| `POST` | `/api/sessions/current/end` | End the open session |
+| `GET` | `/api/sessions` | History (newest first) + `current` |
+| `GET` | `/api/sessions/current` | Open session or `null` |
+
+Only one session may be open at a time (single-driver Pi).
+
 ## What works now vs later
 
-| Now (Slice 0) | Later |
+| Now (Slice 1) | Later |
 | --- | --- |
 | Mock + V4L2 capture loop | Lap OCR (Slice 2) |
-| `/health`, `/metrics`, status UI | Phone session metadata (Slice 1) |
-| CSV session start/stop stub | SQLite (Slice 5) |
-| `pi2b` / `pi5` profiles | Driving signals on Pi 5 (Slice 4) |
-| systemd sketch | Grafana starter (Slice 3) |
+| Phone session create/end + history | SQLite (Slice 5) |
+| CSV with track/car/notes | Driving signals on Pi 5 (Slice 4) |
+| Session Prometheus counters | Grafana starter (Slice 3) |
+| `pi2b` / `pi5` profiles | Sectors (iff cheap on 2B) |
 
 **Out of scope for this slice:** OCR, laps, sectors, throttle/brake/speed/gear, Grafana, Tailscale, SQLite.
 
@@ -180,8 +197,8 @@ See [`docs/README.md`](docs/README.md) for the documentation index (acc-telemetr
 
 - No hardware validation until the capture kit arrives; mock is the default.
 - HDCP / splitter quirks can black-screen the capture path — validate before OCR work.
-- Status UI is read-only; no session create/edit yet.
 - Trusted home LAN assumed (no auth).
+- Sessions are manual metadata only — no lap rows until Slice 2.
 
 ---
 
