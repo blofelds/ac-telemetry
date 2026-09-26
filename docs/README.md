@@ -41,6 +41,7 @@ Nothing deprecated yet. Future bug-fix writeups and abandoned designs stay here 
 | Run without hardware | [USER_GUIDE.md](USER_GUIDE.md) · mock backend |
 | Scrape Prometheus | `GET /metrics` · [FEATURES.md](FEATURES.md) |
 | Understand Pi 2B caps | [ARCHITECTURE.md](ARCHITECTURE.md) · `pi2b` profile |
+| Fix hung `pip install` / uvloop on 2B | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) · root README Pi 2B notes |
 | Install as a service | [`../deploy/ac-telemetry.service`](../deploy/ac-telemetry.service) |
 | See product plan (Project store) | Coordinator docs: plan / product brief (not in this repo yet) |
 
@@ -63,4 +64,5 @@ Nothing deprecated yet. Future bug-fix writeups and abandoned designs stay here 
 
 | Date | Change |
 | --- | --- |
+| 2026-09-26 | Pi 2B install: plain uvicorn / no uvloop hang note |
 | 2026-09-24 | Slice 0 stubs: index + core user/dev docs |

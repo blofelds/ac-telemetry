@@ -61,6 +61,22 @@ ac-telemetry --host 127.0.0.1 --port 8741
 
 Session rows append to `data/sessions/sessions.csv` on capture start/stop.
 
+### Raspberry Pi 2B install notes
+
+Default install uses **plain `uvicorn`** (no `uvloop`). Older `uvicorn[standard]` pulled uvloop, which builds from source on ARM and can appear stuck on a 2B for a very long time.
+
+If you see `Building wheel for uvloop` and it never finishes: **Ctrl+C**, update to a revision with plain uvicorn, then:
+
+```bash
+pip install -e .
+```
+
+Do **not** install `.[standard]` on the 2B (that reintroduces uvloop). On x86 laptops you may optionally use `pip install -e ".[standard]"` for httptools/uvloop.
+
+`.[capture]` (OpenCV headless) is a **separate**, heavier install — only when you need real V4L2; expect it to take a while on a 2B. Mock capture needs only `pip install -e .`.
+
+See [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) if install still hangs.
+
 ---
 
 ## Quick start (V4L2 on the Pi)
@@ -68,7 +84,7 @@ Session rows append to `data/sessions/sessions.csv` on capture start/stop.
 When the HDMI capture dongle is plugged in:
 
 ```bash
-# Optional OpenCV stack for real devices
+# Optional OpenCV stack for real devices (heavy on Pi 2B — separate from base install)
 pip install -e ".[capture]"
 
 # List devices (on the Pi)
@@ -81,7 +97,6 @@ ac-telemetry --backend v4l2
 Default listen address is `0.0.0.0:8741` so a phone on the LAN can open `http://<pi-ip>:8741/`.
 
 A systemd unit sketch lives at [`deploy/ac-telemetry.service`](deploy/ac-telemetry.service).
-
 ---
 
 ## Project structure
@@ -134,9 +149,9 @@ docs/          # Index + core stubs (grow with later slices)
 ## Stack
 
 - Python 3.11+
-- FastAPI + uvicorn
+- FastAPI + plain uvicorn (optional `[standard]` extras on x86 only — avoid on Pi 2B)
 - `prometheus_client`
-- OpenCV (optional extra `[capture]`) for V4L2
+- OpenCV (optional extra `[capture]`) for V4L2 — heavy on Pi 2B
 - CSV files for early persistence
 
 ---
