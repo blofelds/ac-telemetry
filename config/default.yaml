@@ -44,10 +44,12 @@ port: 8741
 data_dir: data/sessions
 
 # Named HUD ROIs. Missing keys = that signal is disabled.
-# Coordinates are for 1280x720; recalibrate on your capture.
-# Point lap_time at the last-lap (completed) time display when mode is last_lap.
+# Coordinates are for 1280x720; recalibrate on your capture (see /debug).
+# See docs/ROI.md for HUD key mapping from acc-telemetry.
 rois:
-  # Scaled from acc-telemetry assetto_corsa_1080p.last_lap_time for pi2b 720p (×2/3).
+  # Completed lap time HUD ("last lap"), not the running timer.
+  # Mapped from acc-telemetry assetto_corsa_1080p.last_lap_time (1080p→720p ×2/3).
+  # Used when detect.lap_time.mode is last_lap.
   lap_time:
     x: 64
     y: 284

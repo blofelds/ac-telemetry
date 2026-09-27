@@ -38,6 +38,7 @@ Honest inventory of what ships now versus what is planned.
 
 - Lap strip (displayed / last recorded / lap # / reader).
 - Session start/end + history + capture status.
+- **ROI debug** at `/debug` — overlay + crop JPEGs from the capture handoff; shows `last_error`.
 
 ### Ops sketch
 
