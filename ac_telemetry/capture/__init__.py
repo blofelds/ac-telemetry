@@ -245,6 +245,21 @@ class CaptureService:
         with self._frame_lock:
             return self._latest_frame
 
+    def get_latest_frame_copy(self) -> object | None:
+        """Copy the latest frame under the lock, then release (for debug JPEG).
+
+        Prefer this over holding a shared reference across ``cv2.imencode`` —
+        encode work must happen *outside* the capture critical path.
+        """
+        with self._frame_lock:
+            frame = self._latest_frame
+            if frame is None:
+                return None
+            try:
+                return frame.copy()
+            except AttributeError:
+                return None
+
     def start(self) -> None:
         with self._lock:
             if self._thread and self._thread.is_alive():
