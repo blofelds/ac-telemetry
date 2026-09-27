@@ -32,13 +32,16 @@ A `pi5` profile exists as a placeholder so the upgrade path is config, not a rew
 
 ## Quick start (mock capture — no hardware)
 
+Default config uses **v4l2** (Pi + dongle). On a laptop / CI, force mock:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-# Mock backend + mock lap-time reader (default)
-ac-telemetry
+# No capture device — override the v4l2 default
+ac-telemetry --backend mock
+# or: AC_TELEMETRY_BACKEND=mock ac-telemetry
 ```
 
 Then open:
@@ -81,10 +84,15 @@ source .venv/bin/activate
 pip install -e .
 
 v4l2-ctl --list-devices
-ac-telemetry --backend v4l2
+# backend defaults to v4l2 in config/default.yaml
+ac-telemetry
 ```
 
 Default listen address is `0.0.0.0:8741`. Systemd sketch: [`deploy/ac-telemetry.service`](deploy/ac-telemetry.service).
+
+Calibrate `rois.lap_time` on the Pi: open
+[`http://<pi-ip>:8741/debug`](http://127.0.0.1:8741/debug)
+(or `GET /api/debug/frame.jpg` and `GET /api/debug/roi/lap_time.jpg`).
 
 ---
 
@@ -139,6 +147,10 @@ Capture + session metrics, plus:
 | --- | --- | --- |
 | `GET` | `/api/laps/current` | Live displayed / last recorded lap |
 | `GET` | `/api/laps` | Recent lap rows (optional `session_id`) |
+| `GET` | `/debug` | ROI calibration page (overlay + crop + `last_error`) |
+| `GET` | `/api/debug/frame.jpg` | Full latest frame JPEG |
+| `GET` | `/api/debug/roi/lap_time.jpg` | `rois.lap_time` crop JPEG |
+| `GET` | `/api/debug/overlay/lap_time.jpg` | Frame with ROI rectangle |
 
 Sessions API unchanged (`POST /api/sessions`, etc.).
 

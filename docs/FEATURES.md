@@ -12,8 +12,8 @@ Honest inventory of what ships now versus what is planned.
 
 ### Capture backends
 
-- **`mock`** — synthetic frames at the profile FPS (default; no hardware).
-- **`v4l2`** — OpenCV `VideoCapture` on a UVC device (system OpenCV on Pi 2B).
+- **`v4l2`** — OpenCV `VideoCapture` on a UVC device (default; system OpenCV on Pi 2B).
+- **`mock`** — synthetic frames at the profile FPS (`--backend mock` / `AC_TELEMETRY_BACKEND=mock`).
 
 ### Health and capture metrics
 
@@ -38,6 +38,7 @@ Honest inventory of what ships now versus what is planned.
 
 - Lap strip (displayed / last recorded / lap # / reader).
 - Session start/end + history + capture status.
+- **ROI debug** at `/debug` — overlay + crop JPEGs from the capture handoff; shows `last_error`.
 
 ### Ops sketch
 
