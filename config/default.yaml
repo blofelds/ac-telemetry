@@ -45,11 +45,12 @@ data_dir: data/sessions
 # Coordinates are for 1280x720; recalibrate on your capture.
 # Point lap_time at the last-lap (completed) time display when mode is last_lap.
 rois:
+  # Scaled from acc-telemetry assetto_corsa_1080p.last_lap_time for pi2b 720p (×2/3).
   lap_time:
-    x: 40
-    y: 20
-    width: 160
-    height: 36
+    x: 64
+    y: 284
+    width: 73
+    height: 14
 
 # Detection runs on a separate thread at a much lower FPS than capture.
 detect:
@@ -59,7 +60,7 @@ detect:
   drop_under_pressure: true
   lap_time:
     # mock: synthetic laps (no OCR). tesseract: optional OCR (heavy on Pi 2B).
-    reader: mock
+    reader: tesseract
     mode: last_lap
     mock_interval_seconds: 45
     min_lap_ms: 30000
