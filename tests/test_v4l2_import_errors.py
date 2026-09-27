@@ -27,8 +27,11 @@ def test_helper_suggests_capture_extra_only_when_cv2_missing() -> None:
     exc = ModuleNotFoundError("No module named 'cv2'", name="cv2")
     err = _v4l2_cv2_import_failure(exc)
     assert isinstance(err, RuntimeError)
-    assert ".[capture]" in str(err) or "ac-telemetry[capture]" in str(err)
-    assert "opencv-python-headless" in str(err)
+    msg = str(err)
+    assert ".[capture]" in msg or "ac-telemetry[capture]" in msg
+    # Pi 2B path prefers apt OpenCV; x86 may still use the capture extra.
+    assert "python3-opencv" in msg or "opencv-python-headless" in msg
+    assert "SIGILL" in msg or "system-site-packages" in msg
 
 
 def test_helper_surfaces_openblas_shared_lib_error() -> None:
@@ -86,5 +89,5 @@ def test_open_suggests_capture_when_cv2_absent(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(RuntimeError) as raised:
         source.open()
     msg = str(raised.value)
-    assert "opencv-python-headless" in msg
+    assert "python3-opencv" in msg or "opencv-python-headless" in msg
     assert ".[capture]" in msg or "ac-telemetry[capture]" in msg

@@ -1,4 +1,4 @@
-"""Prometheus metrics for capture health and session counters."""
+"""Prometheus metrics for capture health, sessions, and lap detection."""
 
 from __future__ import annotations
 
@@ -53,9 +53,35 @@ SESSIONS_OPEN = Gauge(
     "1 if a session is currently running",
     registry=REGISTRY,
 )
+DETECT_LATENCY = Gauge(
+    "ac_telemetry_detect_latency_seconds",
+    "Last lap-time detect duration in seconds",
+    registry=REGISTRY,
+)
+DETECT_FAILURES = Counter(
+    "ac_telemetry_detect_failures_total",
+    "Lap-time OCR/read failures since process start",
+    registry=REGISTRY,
+)
+DETECT_DROPS = Counter(
+    "ac_telemetry_detect_drops_total",
+    "Detect ticks dropped because a previous tick was still busy",
+    registry=REGISTRY,
+)
+LAPS_RECORDED = Counter(
+    "ac_telemetry_laps_recorded_total",
+    "Completed laps persisted to CSV",
+    registry=REGISTRY,
+)
+SIGNAL_LAP_TIME_MS = Gauge(
+    "ac_telemetry_signal_lap_time_ms",
+    "Last displayed lap time in milliseconds (NaN if unknown)",
+    registry=REGISTRY,
+)
 
 UP.set(1)
 SESSIONS_OPEN.set(0)
+SIGNAL_LAP_TIME_MS.set(float("nan"))
 
 _last_error_count = 0
 _last_frame_count = 0
@@ -79,6 +105,27 @@ def sync_from_stats(stats: CaptureStats) -> None:
     if stats.frames > _last_frame_count:
         FRAMES_TOTAL.inc(stats.frames - _last_frame_count)
         _last_frame_count = stats.frames
+
+
+def observe_detect(
+    *,
+    latency_seconds: float | None = None,
+    failure: bool = False,
+    lap_recorded: bool = False,
+    dropped: bool = False,
+    displayed_time_ms: int | None = None,
+) -> None:
+    """Update detect-related metrics from the detect worker."""
+    if latency_seconds is not None:
+        DETECT_LATENCY.set(latency_seconds)
+    if failure:
+        DETECT_FAILURES.inc()
+    if lap_recorded:
+        LAPS_RECORDED.inc()
+    if dropped:
+        DETECT_DROPS.inc()
+    if displayed_time_ms is not None:
+        SIGNAL_LAP_TIME_MS.set(displayed_time_ms)
 
 
 def render_metrics() -> tuple[bytes, str]:
