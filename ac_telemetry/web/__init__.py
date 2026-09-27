@@ -1,4 +1,4 @@
-"""Phone-friendly LAN UI: session create/end + capture status (Slice 1)."""
+"""Phone-friendly LAN UI: sessions, live lap time, capture status."""
 
 STATUS_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -17,6 +17,7 @@ STATUS_HTML = """<!DOCTYPE html>
       --accent: #4a8fd4;
       --line: #2a3542;
       --input: #0f1419;
+      --lap: #e6c07b;
     }
     * { box-sizing: border-box; }
     body {
@@ -135,7 +136,15 @@ STATUS_HTML = """<!DOCTYPE html>
 </head>
 <body>
   <h1>AC Telemetry</h1>
-  <p class="sub">Session logger · phone-friendly · LAN only</p>
+  <p class="sub">Lap times · sessions · LAN only</p>
+
+  <h2>Lap time</h2>
+  <div class="grid">
+    <div class="stat"><div class="label">Displayed</div><div class="value" id="lap-display" style="color:var(--lap)">…</div></div>
+    <div class="stat"><div class="label">Last recorded</div><div class="value" id="lap-recorded">…</div></div>
+    <div class="stat"><div class="label">Lap #</div><div class="value" id="lap-number">…</div></div>
+    <div class="stat"><div class="label">Reader</div><div class="value" id="lap-reader">…</div></div>
+  </div>
 
   <h2>Session</h2>
   <div class="panel" id="session-panel">
@@ -166,7 +175,7 @@ STATUS_HTML = """<!DOCTYPE html>
 
   <footer>
     <a href="/health">/health</a> · <a href="/metrics">/metrics</a> ·
-    <a href="/api/sessions">/api/sessions</a> · Slice 1
+    <a href="/api/sessions">/api/sessions</a> · <a href="/api/laps">/api/laps</a>
   </footer>
 
   <script>
@@ -244,6 +253,13 @@ STATUS_HTML = """<!DOCTYPE html>
         $("fps").textContent =
           (d.measured_fps ?? "—") + " / " + (d.target_fps ?? "—");
         renderCurrent(d.session || null);
+        const lap = d.lap || {};
+        $("lap-display").textContent = lap.displayed_time || "—";
+        $("lap-recorded").textContent = lap.last_recorded_time || "—";
+        $("lap-number").textContent =
+          (lap.lap_number != null ? lap.lap_number : "—");
+        $("lap-reader").textContent =
+          (lap.enabled === false ? "off" : (lap.reader || "—"));
       } catch (e) {
         $("running").textContent = "unreachable";
       }
