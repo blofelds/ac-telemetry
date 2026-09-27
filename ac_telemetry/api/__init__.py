@@ -1,4 +1,4 @@
-"""HTTP API: health, metrics, sessions, laps, phone UI."""
+"""HTTP API: health, metrics, sessions, laps, phone UI, ROI debug."""
 
 from __future__ import annotations
 
@@ -10,10 +10,11 @@ from pydantic import BaseModel, Field
 
 from ac_telemetry import metrics
 from ac_telemetry.capture import CaptureService
+from ac_telemetry import debug_frames
 from ac_telemetry.detect import DetectService
 from ac_telemetry.settings import Settings
 from ac_telemetry.store import LapStore, SessionConflict, SessionNotFound, SessionStore
-from ac_telemetry.web import STATUS_HTML
+from ac_telemetry.web import DEBUG_HTML, STATUS_HTML
 
 
 class SessionCreate(BaseModel):
@@ -49,6 +50,99 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def status_page() -> str:
         return STATUS_HTML
+
+    @app.get("/debug", response_class=HTMLResponse)
+    def debug_page() -> str:
+        """ROI calibration page: overlay + crop + last_error."""
+        return DEBUG_HTML
+
+    def _jpeg_or_error(payload: bytes | None, *, missing: str) -> Response:
+        if payload is None:
+            raise HTTPException(status_code=503, detail=missing)
+        return Response(
+            content=payload,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/debug/info")
+    def api_debug_info() -> dict[str, Any]:
+        """ROI coords + detect/capture errors for the debug page."""
+        roi = settings.rois.get("lap_time")
+        lap = _lap_payload() or {}
+        stats = capture.stats.as_dict()
+        return {
+            "roi": None
+            if roi is None
+            else {
+                "name": "lap_time",
+                "x": roi.x,
+                "y": roi.y,
+                "width": roi.width,
+                "height": roi.height,
+            },
+            "frame": {
+                "width": stats.get("width"),
+                "height": stats.get("height"),
+                "age_seconds": stats.get("last_frame_age_seconds"),
+                "available": capture.get_latest_frame() is not None,
+            },
+            "capture_last_error": stats.get("last_error"),
+            "detect_last_error": lap.get("last_error"),
+            "lap": lap,
+            "session_id": (store.current_session() or {}).get("session_id"),
+        }
+
+    @app.get("/api/debug/frame.jpg")
+    def api_debug_frame() -> Response:
+        """Full latest capture frame as JPEG (from handoff copy; no ffmpeg)."""
+        try:
+            frame = capture.get_latest_frame_copy()
+            payload = debug_frames.encode_full_frame_jpeg(frame)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return _jpeg_or_error(
+            payload,
+            missing="No frame yet (is capture running? mock has no pixels)",
+        )
+
+    @app.get("/api/debug/roi/{name}.jpg")
+    def api_debug_roi(name: str) -> Response:
+        """Crop of a named ROI from the latest frame."""
+        roi = settings.rois.get(name)
+        if roi is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"ROI {name!r} not configured in settings.rois",
+            )
+        try:
+            frame = capture.get_latest_frame_copy()
+            payload = debug_frames.encode_roi_jpeg(frame, roi)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return _jpeg_or_error(
+            payload,
+            missing=f"No frame or empty crop for ROI {name!r}",
+        )
+
+    @app.get("/api/debug/overlay/{name}.jpg")
+    def api_debug_overlay(name: str) -> Response:
+        """Full frame with the named ROI rectangle drawn."""
+        roi = settings.rois.get(name)
+        if roi is None and name != "lap_time":
+            raise HTTPException(
+                status_code=404,
+                detail=f"ROI {name!r} not configured in settings.rois",
+            )
+        try:
+            frame = capture.get_latest_frame_copy()
+            payload = debug_frames.encode_overlay_jpeg(frame, roi)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return _jpeg_or_error(
+            payload,
+            missing="No frame yet (is capture running? mock has no pixels)",
+        )
 
     @app.get("/health")
     def health() -> dict:
