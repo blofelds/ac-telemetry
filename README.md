@@ -32,13 +32,16 @@ A `pi5` profile exists as a placeholder so the upgrade path is config, not a rew
 
 ## Quick start (mock capture — no hardware)
 
+Default config uses **v4l2** (Pi + dongle). On a laptop / CI, force mock:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-# Mock backend + mock lap-time reader (default)
-ac-telemetry
+# No capture device — override the v4l2 default
+ac-telemetry --backend mock
+# or: AC_TELEMETRY_BACKEND=mock ac-telemetry
 ```
 
 Then open:
@@ -81,10 +84,13 @@ source .venv/bin/activate
 pip install -e .
 
 v4l2-ctl --list-devices
-ac-telemetry --backend v4l2
+# backend defaults to v4l2 in config/default.yaml
+ac-telemetry
 ```
 
 Default listen address is `0.0.0.0:8741`. Systemd sketch: [`deploy/ac-telemetry.service`](deploy/ac-telemetry.service).
+
+Calibrate `rois.lap_time` with the debug helper: open `http://<pi-ip>:8741/debug` (or `GET /api/debug/frame.jpg` and `GET /api/debug/roi/lap_time.jpg`).
 
 ---
 
