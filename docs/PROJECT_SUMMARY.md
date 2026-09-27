@@ -4,17 +4,17 @@ Orientation for someone opening this repo for the first time.
 
 ## What it is
 
-**ac-telemetry** is a headless Raspberry Pi service that will log Assetto Corsa (PS5) telemetry from an HDMI capture path. Today (Slice 1) it proves capture **and** lets you create/end driving sessions from a phone (track, car, notes) persisted as CSV, with Prometheus session counters.
+**ac-telemetry** is a headless Raspberry Pi service that logs Assetto Corsa (PS5) telemetry from an HDMI capture path. Today it proves capture, lets you create/end driving sessions from a phone (track, car, notes), and records **lap times** to CSV (mock reader by default; optional tesseract), with Prometheus metrics.
 
 ## What it is not
 
 - Not [acc-telemetry](https://github.com/blofelds/acc-telemetry) (offline video-file extractor)
-- Not a lap timer yet (Slice 2)
+- Not a sector / throttle / brake logger yet
 - Not a cloud service
 
 ## Who it is for
 
-Gary Blofeld — home sim setup: PS5 → splitter → USB capture → Pi, phone on LAN for session metadata (later: live laps).
+Gary Blofeld — home sim setup: PS5 → splitter → USB capture → Pi, phone on LAN for sessions and live lap times.
 
 ## Stack in one line
 
@@ -22,7 +22,7 @@ Python · FastAPI · Prometheus client · optional OpenCV · CSV files · system
 
 ## Mental model
 
-Think “small appliance,” not “platform.” One process, one bind address, one CSV folder, one open session. Features arrive as slices; each slice should stay reviewable as one focused PR.
+Think “small appliance,” not “platform.” One process, one bind address, one CSV folder, one open session. Capture owns frames; detect samples a tiny ROI at low FPS and must never block the capture thread.
 
 ## Where to read next
 
