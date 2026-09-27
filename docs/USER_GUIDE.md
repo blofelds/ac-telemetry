@@ -1,14 +1,15 @@
-# User guide (Slice 1)
+# User guide
 
-How to run **ac-telemetry** today: prove capture (mock or V4L2), create/end driving sessions from a phone, scrape metrics. Lap OCR is **not** in this slice.
+How to run **ac-telemetry**: capture (mock or V4L2), sessions, and lap-time logging.
 
 ## Requirements
 
 - Python 3.11+
 - For **mock** (default): no camera, no OpenCV
-- For **V4L2**: USB UVC capture device + `pip install -e ".[capture]"` (OpenCV headless)
+- For **V4L2 on Pi 2B**: `apt` OpenCV + venv `--system-site-packages` (see below)
+- Optional OCR: `tesseract-ocr` + `pip install -e ".[ocr]"`
 
-## Install
+## Install (laptop / mock)
 
 ```bash
 git clone https://github.com/blofelds/ac-telemetry.git
@@ -18,109 +19,90 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Default install uses plain uvicorn (no uvloop). On Pi 2B, if an older checkout hung on `Building wheel for uvloop`, Ctrl+C, update the tree, and re-run `pip install -e .`. Skip `.[standard]` on the 2B. `.[capture]` (OpenCV) is separate and heavy — only for real V4L2.
+## Install (Raspberry Pi 2B + real capture)
 
-## Run with mock capture (laptop or Pi, no dongle)
+```bash
+sudo apt update
+sudo apt install -y python3-opencv python3-venv v4l-utils
+# Optional later: tesseract-ocr
+
+cd ~/git/ac-telemetry   # or your clone path
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+**Do not** `pip install -e ".[capture]"` on the 2B — OpenCV/numpy wheels frequently die with **SIGILL**. Use distro OpenCV via `--system-site-packages` instead.
+
+Prefer MJPEG (`prefer_mjpeg: true` in `config/default.yaml`) so USB2 is not flooded with raw YUYV.
+
+## Run with mock capture
 
 ```bash
 ac-telemetry
+# or: ac-telemetry --host 127.0.0.1
 ```
 
-Defaults (`config/default.yaml`):
+1. Open `http://127.0.0.1:8741/` — lap strip + session form + capture status.
+2. **Start session** (track / car / notes).
+3. With default `detect.lap_time.reader: mock`, a synthetic lap appears every ~45s.
+4. Check `data/sessions/laps.csv` and `GET /api/laps`.
+5. **End session** when done.
 
-- Backend: `mock`
-- Profile: `pi2b` (1280×720 @ 10 fps, hard caps ≤720p / ≤15 fps)
-- Bind: `0.0.0.0:8741`
+For faster mock laps while testing, set `detect.lap_time.mock_interval_seconds: 5` in YAML.
 
-Localhost-only:
-
-```bash
-ac-telemetry --host 127.0.0.1
-```
-
-### What you should see
-
-1. Open `http://127.0.0.1:8741/` — phone-friendly session form + capture status.
-2. Enter **track**, **car**, optional **notes** → **Start session**.
-3. **End session** when done; history lists prior runs.
-4. `GET /api/sessions` — JSON history; `GET /health` — capture + current session.
-5. `GET /metrics` — Prometheus text (capture + session counters).
-6. `data/sessions/sessions.csv` — append-only rows (start then stop per id).
-
-Capture still runs for FPS/health proof. Sessions are **not** created by capture start/stop anymore — you start them from the UI or API.
-
-## Run with a real capture device (Pi)
-
-1. Plug in the HDMI capture dongle; confirm the PS5 path has a live display (splitter → TV).
-2. Install capture extras: `pip install -e ".[capture]"`.
-3. Find the device: `v4l2-ctl --list-devices` (often `/dev/video0`).
-4. Start:
+## Run with V4L2 on the Pi
 
 ```bash
+v4l2-ctl --list-devices
 ac-telemetry --backend v4l2
-# or
-AC_TELEMETRY_BACKEND=v4l2 AC_TELEMETRY_DEVICE=/dev/video0 ac-telemetry
 ```
 
-5. On a phone on the same LAN: `http://<pi-ip>:8741/` → start a session before you drive.
+1. Calibrate `rois.lap_time` in `config/default.yaml` for your 720p HUD (last-lap display).
+2. Keep `reader: mock` until capture is stable; then optionally switch to `tesseract`.
+3. Start a session from the phone UI before you drive.
 
-### systemd (sketch)
+### systemd
 
-See [`../deploy/ac-telemetry.service`](../deploy/ac-telemetry.service). Copy to `/etc/systemd/system/`, adjust paths/user, then:
+See [`../deploy/ac-telemetry.service`](../deploy/ac-telemetry.service). Pi user needs the `video` group.
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now ac-telemetry
-```
+## Lap times
 
-The Pi user needs membership in the `video` group for `/dev/video*`.
+| Piece | Detail |
+| --- | --- |
+| ROI | `rois.lap_time` — tiny crop only |
+| Detect FPS | `detect.fps` (default 2) — separate from capture FPS |
+| Readers | `mock` (default) or `tesseract` (optional extra) |
+| Modes | `last_lap` (record when last-lap text changes) or `current_timer` (record on reset) |
+| CSV | `data/sessions/laps.csv` |
+| Live | UI lap strip + `GET /api/laps/current` |
+
+Laps are written only while a session is open.
 
 ## Sessions API
 
 ```bash
-# Start
 curl -s -X POST http://127.0.0.1:8741/api/sessions \
   -H 'Content-Type: application/json' \
-  -d '{"track":"Monza","car":"Ferrari 488 GT3","notes":"wet practice"}'
+  -d '{"track":"Monza","car":"Ferrari 488 GT3","notes":""}'
 
-# List
-curl -s 'http://127.0.0.1:8741/api/sessions?limit=20'
-
-# End current
+curl -s http://127.0.0.1:8741/api/laps/current
+curl -s http://127.0.0.1:8741/api/laps
 curl -s -X POST http://127.0.0.1:8741/api/sessions/current/end
 ```
 
-Only one session may be open at a time. A second `POST /api/sessions` returns **409** until you end the current one.
+## Metrics
 
-## CSV sessions
+Scrape `GET /metrics`. Lap-related names:
 
-| Column | Meaning |
-| --- | --- |
-| `session_id` | Short id |
-| `started_at` / `ended_at` | UTC ISO timestamps |
-| `track` / `car` / `notes` | Manual metadata from phone/API |
-| `backend` / `profile` / `device` | Capture snapshot (filled when available) |
-| `width` / `height` / `target_fps` | Capture geometry |
-| `frames` / `errors` / `avg_fps` | Snapshot at end (if capture was running) |
-| `status` | `running` or `stopped` |
+- `ac_telemetry_detect_latency_seconds`
+- `ac_telemetry_detect_failures_total`
+- `ac_telemetry_detect_drops_total`
+- `ac_telemetry_laps_recorded_total`
+- `ac_telemetry_signal_lap_time_ms`
 
-File: `data/sessions/sessions.csv` (or `AC_TELEMETRY_DATA_DIR`). Append-only; last row per `session_id` wins. Slice 0 CSVs without `track`/`car`/`notes` are migrated on next open.
+## Next reading
 
-## Configuration quick reference
-
-| Setting | Env / flag | Default |
-| --- | --- | --- |
-| Profile | `AC_TELEMETRY_PROFILE` | `pi2b` |
-| Backend | `AC_TELEMETRY_BACKEND` / `--backend` | `mock` |
-| Device | `AC_TELEMETRY_DEVICE` | `/dev/video0` |
-| Host / port | `AC_TELEMETRY_HOST` / `--port` | `0.0.0.0` / `8741` |
-| Data dir | `AC_TELEMETRY_DATA_DIR` | `data/sessions` |
-
-## What this guide does not cover yet
-
-- Lap / sector detection (Slice 2)
-- Grafana dashboards (Slice 3)
-- Driving signals (Slice 4)
-- SQLite (Slice 5)
-
-See [FEATURES.md](FEATURES.md) and [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+- [FEATURES.md](FEATURES.md) — delivered vs planned
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Pi install, black frames, OCR misses
+- [ARCHITECTURE.md](ARCHITECTURE.md) — detect thread + CSV shape
