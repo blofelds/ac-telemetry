@@ -24,9 +24,11 @@ profiles:
 # Active profile name (pi2b | pi5)
 profile: pi2b
 
-# Capture backend: mock | v4l2
-# Use mock until the HDMI capture dongle arrives; switch to v4l2 on the Pi.
-backend: mock
+# Capture backend: v4l2 | mock
+# Default is v4l2 for the Pi + HDMI dongle. Use mock on a laptop / CI:
+#   ac-telemetry --backend mock
+#   or AC_TELEMETRY_BACKEND=mock
+backend: v4l2
 
 # V4L2 device path (ignored by mock)
 device: /dev/video0

@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     )
 
     profile: ProfileName = "pi2b"
-    backend: BackendName = "mock"
+    backend: BackendName = "v4l2"
     device: str = "/dev/video0"
     # Prefer MJPEG on UVC devices (lower USB/CPU than raw YUYV on Pi 2B).
     prefer_mjpeg: bool = True
@@ -193,7 +193,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
     env_settings = Settings()
     return Settings(
         profile=env_settings.profile if "AC_TELEMETRY_PROFILE" in os.environ else data.get("profile", "pi2b"),
-        backend=env_settings.backend if "AC_TELEMETRY_BACKEND" in os.environ else data.get("backend", "mock"),
+        backend=env_settings.backend if "AC_TELEMETRY_BACKEND" in os.environ else data.get("backend", "v4l2"),
         device=env_settings.device if "AC_TELEMETRY_DEVICE" in os.environ else data.get("device", "/dev/video0"),
         prefer_mjpeg=(
             env_settings.prefer_mjpeg
