@@ -60,15 +60,19 @@ class FrameSource(Protocol):
     def open(self) -> tuple[int, int]:
         """Open device; return actual (width, height)."""
 
-    def read(self) -> bool:
-        """Grab one frame. Return False on failure."""
+    def read(self) -> tuple[bool, object | None]:
+        """Grab one frame. Return (ok, frame_or_None)."""
 
     def close(self) -> None:
         ...
 
 
 class MockFrameSource:
-    """Synthetic frames at the profile FPS — no camera required."""
+    """Synthetic frames at the profile FPS — no camera required.
+
+    Returns ``(True, None)`` so detection can use the mock lap-time reader
+    without pulling in OpenCV/numpy on a laptop or a lean Pi venv.
+    """
 
     def __init__(self, profile: CaptureProfile) -> None:
         self._profile = profile
@@ -78,11 +82,11 @@ class MockFrameSource:
         self._opened = True
         return self._profile.width, self._profile.height
 
-    def read(self) -> bool:
+    def read(self) -> tuple[bool, object | None]:
         if not self._opened:
-            return False
+            return False, None
         # Cheap stand-in for a frame; sleep is owned by the capture loop.
-        return True
+        return True, None
 
     def close(self) -> None:
         self._opened = False
@@ -105,8 +109,10 @@ def _v4l2_cv2_import_failure(exc: ImportError) -> RuntimeError:
     )
     if missing_cv2:
         return RuntimeError(
-            "opencv-python-headless is required for the v4l2 backend "
-            "(pip install -e '.[capture]'). "
+            "OpenCV (cv2) is required for the v4l2 backend. On Raspberry Pi 2B "
+            "prefer: sudo apt install python3-opencv && python3 -m venv "
+            "--system-site-packages .venv — do not pip install '.[capture]' "
+            "(wheels often SIGILL on the 2B). On x86: pip install -e '.[capture]'. "
             f"Original error: {detail}"
         )
     if "openblas" in detail_l or "libopenblas" in detail_l:
@@ -132,9 +138,16 @@ def _v4l2_cv2_import_failure(exc: ImportError) -> RuntimeError:
 class V4L2FrameSource:
     """OpenCV VideoCapture on a V4L2 UVC device."""
 
-    def __init__(self, device: str, profile: CaptureProfile) -> None:
+    def __init__(
+        self,
+        device: str,
+        profile: CaptureProfile,
+        *,
+        prefer_mjpeg: bool = True,
+    ) -> None:
         self._device = device
         self._profile = profile
+        self._prefer_mjpeg = prefer_mjpeg
         self._cap = None
 
     def open(self) -> tuple[int, int]:
@@ -151,6 +164,12 @@ class V4L2FrameSource:
             cap = cv2.VideoCapture(src)
         if not cap.isOpened():
             raise RuntimeError(f"Failed to open capture device: {self._device}")
+
+        if self._prefer_mjpeg:
+            # MJPEG usually beats uncompressed YUYV on USB 2.0 / Pi 2B.
+            fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+            if not cap.set(cv2.CAP_PROP_FOURCC, fourcc):
+                logger.warning("Device rejected MJPEG FourCC; continuing with default")
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._profile.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._profile.height)
@@ -172,11 +191,13 @@ class V4L2FrameSource:
         self._cap = cap
         return width, height
 
-    def read(self) -> bool:
+    def read(self) -> tuple[bool, object | None]:
         if self._cap is None:
-            return False
-        ok, _frame = self._cap.read()
-        return bool(ok)
+            return False, None
+        ok, frame = self._cap.read()
+        if not ok:
+            return False, None
+        return True, frame
 
     def close(self) -> None:
         if self._cap is not None:
@@ -188,7 +209,11 @@ def build_source(settings: Settings, profile: CaptureProfile) -> FrameSource:
     if settings.backend == "mock":
         return MockFrameSource(profile)
     if settings.backend == "v4l2":
-        return V4L2FrameSource(settings.device, profile)
+        return V4L2FrameSource(
+            settings.device,
+            profile,
+            prefer_mjpeg=settings.prefer_mjpeg,
+        )
     raise ValueError(f"Unknown capture backend: {settings.backend!r}")
 
 
@@ -207,11 +232,18 @@ class CaptureService:
         default=None, init=False, repr=False
     )
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _frame_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _latest_frame: object | None = field(default=None, init=False, repr=False)
 
     def set_session_hooks(self, on_start, on_stop) -> None:
         """CSV (or later store) callbacks for session start/stop."""
         self._on_start = on_start
         self._on_stop = on_stop
+
+    def get_latest_frame(self) -> object | None:
+        """Return the most recent frame reference (detect must crop/copy fast)."""
+        with self._frame_lock:
+            return self._latest_frame
 
     def start(self) -> None:
         with self._lock:
@@ -290,8 +322,9 @@ class CaptureService:
         while not self._stop.is_set():
             tick = time.monotonic()
             ok = False
+            frame = None
             try:
-                ok = source.read()
+                ok, frame = source.read()
             except Exception as exc:  # noqa: BLE001
                 self.stats.errors += 1
                 self.stats.last_error = str(exc)
@@ -304,6 +337,10 @@ class CaptureService:
                 self.stats.last_error = "frame read returned False"
                 time.sleep(min(1.0, interval))
                 continue
+
+            # Publish latest frame for detect (replace; never queue — drop old).
+            with self._frame_lock:
+                self._latest_frame = frame
 
             now = time.time()
             self.stats.frames += 1
