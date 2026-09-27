@@ -19,9 +19,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# x86 / Pi 5 only — pip OpenCV wheels often SIGILL on Pi 2B.
+# On Pi 2B use: sudo apt install python3-opencv && venv --system-site-packages
 capture = [
     "opencv-python-headless>=4.10.0",
     "numpy>=1.26.0",
+]
+# Optional OCR for detect.lap_time.reader: tesseract (heavy on Pi 2B).
+ocr = [
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0.0",
 ]
 # Optional on x86 / faster hosts — do not install on Pi 2B (uvloop compile).
 standard = [
