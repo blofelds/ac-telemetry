@@ -88,6 +88,47 @@ class MockFrameSource:
         self._opened = False
 
 
+def _v4l2_cv2_import_failure(exc: ImportError) -> RuntimeError:
+    """Map a cv2 ImportError to a RuntimeError that keeps the real cause visible.
+
+    On Raspberry Pi OS, pip numpy/opencv often fail with missing libopenblas.so.0.
+    That is still an ImportError, so wrapping every failure as "install .[capture]"
+    hides the apt fix. Only suggest the capture extra when the cv2 module itself
+    is absent.
+    """
+    detail = str(exc)
+    detail_l = detail.lower()
+    missing_cv2 = isinstance(exc, ModuleNotFoundError) and (
+        getattr(exc, "name", None) == "cv2"
+        or "no module named 'cv2'" in detail_l
+        or 'no module named "cv2"' in detail_l
+    )
+    if missing_cv2:
+        return RuntimeError(
+            "opencv-python-headless is required for the v4l2 backend "
+            "(pip install -e '.[capture]'). "
+            f"Original error: {detail}"
+        )
+    if "openblas" in detail_l or "libopenblas" in detail_l:
+        return RuntimeError(
+            "OpenCV/numpy failed to import because OpenBLAS is missing "
+            f"({detail}). On Raspberry Pi OS / Debian: "
+            "sudo apt install libopenblas0 "
+            "(alternatives: libopenblas0-pthread, libopenblas-dev). "
+            "apt python3-opencv is optional if pip opencv is already installed."
+        )
+    if "numpy" in detail_l:
+        return RuntimeError(
+            "OpenCV failed to import due to a numpy load error "
+            f"({detail}). On Raspberry Pi OS, pip numpy/opencv often need "
+            "system OpenBLAS: sudo apt install libopenblas0. "
+            "Re-check with: python -c 'import numpy; import cv2'."
+        )
+    return RuntimeError(
+        f"OpenCV failed to import for the v4l2 backend: {detail}"
+    )
+
+
 class V4L2FrameSource:
     """OpenCV VideoCapture on a V4L2 UVC device."""
 
@@ -100,10 +141,7 @@ class V4L2FrameSource:
         try:
             import cv2  # lazy: optional until hardware path is used
         except ImportError as exc:
-            raise RuntimeError(
-                "opencv-python-headless is required for the v4l2 backend "
-                "(pip install 'ac-telemetry[capture]')"
-            ) from exc
+            raise _v4l2_cv2_import_failure(exc) from exc
 
         # Prefer device path; fall back to numeric index if given as digit.
         src: str | int = int(self._device) if self._device.isdigit() else self._device

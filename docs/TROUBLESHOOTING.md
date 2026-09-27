@@ -25,12 +25,23 @@
   `curl -X POST http://127.0.0.1:8741/api/sessions/current/end`
 - After a crash, check `GET /api/sessions` for a leftover `running` row and end by id.
 
+## V4L2: `ImportError` / missing `libopenblas.so.0`
+
+pip's numpy and opencv-python-headless wheels on Raspberry Pi OS need **system OpenBLAS**. Without it, `import cv2` (or `import numpy`) fails with something like `libopenblas.so.0: cannot open shared object file`, while HTTP still starts (capture fails soft).
+
+- Install OpenBLAS: `sudo apt install libopenblas0`
+- Alternatives if that package name differs: `libopenblas0-pthread`, or `libopenblas-dev`
+- Confirm: `python -c 'import numpy; import cv2'`
+- **Do not** treat this as a missing pip package — reinstalling `.[capture]` will not fix a missing `.so`
+- `apt install python3-opencv` is **optional** if pip opencv is already installed; prefer fixing OpenBLAS for the venv wheels
+
 ## V4L2: failed to open device
 
 - Is the dongle plugged in? `ls -l /dev/video*`
 - Permissions: user must be in the `video` group (`groups`; re-login after `usermod -aG video $USER`).
 - Wrong index: try `/dev/video0`, `/dev/video1`, or `v4l2-ctl --list-devices`.
-- OpenCV missing: `pip install -e ".[capture]"`.
+- OpenCV **module** missing (`No module named 'cv2'`): `pip install -e ".[capture]"`.
+- OpenCV installed but import still fails: see **missing libopenblas.so.0** above.
 
 ## Black frames / zero FPS on real HDMI
 
