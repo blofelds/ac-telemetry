@@ -1,71 +1,84 @@
-# Architecture (Slice 1)
+# Architecture
 
 ## System overview
 
-One Python process owns capture, CSV session store, HTTP API, Prometheus metrics, and a phone-friendly UI.
+One Python process owns capture, detection, CSV stores, HTTP API, Prometheus metrics, and a phone-friendly UI.
 
 ```
                  ┌─────────────────────────────────────┐
   HDMI/UVC ───►  │  CaptureService (thread)            │
-  or mock        │    mock | v4l2 FrameSource          │
+  or mock        │    latest-frame slot (replace)      │
                  └──────────────┬──────────────────────┘
-                                │ stats (optional snapshot on end)
+                                │ get_latest_frame()
                  ┌──────────────▼──────────────────────┐
-                 │  SessionStore (CSV append)          │
+                 │  DetectService (thread, low FPS)    │
+                 │    crop rois.lap_time → reader      │
+                 │    debounce → LapStore CSV          │
+                 └──────────────┬──────────────────────┘
+                                │
+                 ┌──────────────▼──────────────────────┐
+                 │  SessionStore + LapStore (CSV)      │
                  │  Prometheus gauges/counters         │
-                 │  FastAPI: / /health /metrics /api/* │
-                 │  Phone UI → POST /api/sessions      │
+                 │  FastAPI + phone UI                 │
                  └─────────────────────────────────────┘
 ```
 
-No separate worker queue. Pi 2B cannot afford accidental multi-process weight this early.
+No separate worker process. Pi 2B cannot afford accidental multi-process weight this early.
 
 ## Modules
 
 | Package | Role |
 | --- | --- |
-| `ac_telemetry.settings` | YAML + env; `CaptureProfile` with hard caps |
-| `ac_telemetry.capture` | Background loop; mock / V4L2 sources |
-| `ac_telemetry.store` | `sessions.csv` with track/car/notes; API-owned lifecycle |
-| `ac_telemetry.metrics` | Dedicated Prometheus registry (capture + sessions) |
+| `ac_telemetry.settings` | YAML + env; profiles, `rois`, `detect` |
+| `ac_telemetry.capture` | Background loop; mock / V4L2; latest-frame handoff |
+| `ac_telemetry.detect` | Low-FPS lap_time crop + pluggable readers |
+| `ac_telemetry.store` | `sessions.csv` + `laps.csv` |
+| `ac_telemetry.metrics` | Dedicated Prometheus registry |
 | `ac_telemetry.api` | FastAPI routes |
 | `ac_telemetry.web` | Inline phone UI HTML |
 | `ac_telemetry.main` | Wiring, signals, uvicorn |
 
-## Session model (Slice 1)
-
-- Sessions are started/ended via HTTP (or the UI that calls it), **not** via capture hooks.
-- Columns include metadata (`track`, `car`, `notes`) plus optional capture snapshot fields.
-- At most one `running` session in process memory; CSV remains the durable history.
-- On process restart, an unfinished CSV `running` row can still be ended by id (recovered from disk).
-
 ## Capture profiles
 
-Profiles are **named** (`pi2b`, `pi5`) so board limits are not sprinkled through detection code later.
+Profiles are **named** (`pi2b`, `pi5`) so board limits are not sprinkled through detection code.
 
 - Requested width/height/fps are **clamped** to `max_*` on load.
-- `pi2b` defaults target sustainable decode headroom for later OCR, not max device capability.
-- `pi5` is a placeholder with higher ceilings; untuned until hardware exists.
+- `prefer_mjpeg` asks UVC devices for MJPEG FourCC (USB2-friendly).
 
-## Backends
+## Detection design (Pi 2B)
 
-- **Mock** — `read()` always succeeds; the loop paces to target FPS.
-- **V4L2** — OpenCV with `CAP_V4L2` when available; frames discarded after read.
+1. Capture publishes the newest frame under a lock (replace, never queue).
+2. Detect wakes at `detect.fps` (default 2). If a prior tick is still busy and `drop_under_pressure` is on, the tick is dropped and counted.
+3. Crop only `rois.lap_time` (copy the tiny rectangle, not the full frame twice beyond that).
+4. Reader is pluggable (`mock` | `tesseract`). Missing ROI keys fail soft for OCR; mock ignores pixels.
+5. Debounce requires N identical reads before recording.
+6. Persist only when a session is open.
 
-## Persistence choice (CSV first)
+### Readers
 
-- Zero daemon dependencies beyond the filesystem
-- Easy to inspect on the Pi and copy into Obsidian later
-- Column set designed to survive a future SQLite migration (Slice 5)
+| Reader | Needs frame | Notes |
+| --- | --- | --- |
+| `mock` | No | Synthetic last-lap times for store/API proof |
+| `tesseract` | Yes | Optional `[ocr]` extra + system tesseract; heavy on 2B |
 
-We intentionally do **not** introduce SQLite in Slice 1.
+### Modes
 
-## Metrics design
+| Mode | When a lap row is written |
+| --- | --- |
+| `last_lap` | Debounced last-lap text changes to a new non-zero time |
+| `current_timer` | Timer resets downward past `reset_slack_ms` after `min_lap_ms` |
+
+## Persistence (CSV first)
+
+- `sessions.csv` — session metadata + optional capture snapshot
+- `laps.csv` — `session_id`, `lap_number`, `lap_time`, `lap_time_ms`, …
+- Column sets designed to survive a future SQLite migration
+
+## Metrics
 
 - Capture health: up, running, FPS, last frame age, error/frame counters
-- Sessions: started/ended counters + open gauge
-
-Later slices should add signal gauges keyed by name (`signal_*`) rather than one-off metric names that cannot grow.
+- Sessions: started/ended/open
+- Detect: latency gauge, failure/drop/lap counters, `signal_lap_time_ms`
 
 ## Networking
 
@@ -75,14 +88,8 @@ Later slices should add signal gauges keyed by name (`signal_*`) rather than one
 
 ## Design principles
 
-1. Prove capture before OCR (Slice 0); attach human session metadata before laps (Slice 1).
+1. Prove capture before OCR; attach human session metadata before laps.
 2. Prefer simple code over frameworks-on-frameworks.
 3. Pi 2B resource limits win every tradeoff.
-4. Leave config/API shapes that do not force a rewrite on Pi 5.
-
-## Future extension points (not built)
-
-- Lap/sector ROI readers appending lap CSV rows under a session id (Slice 2)
-- Grafana starter dashboards (Slice 3)
-- Driving-signal sample streams (Slice 4)
-- SQLite WAL store (Slice 5)
+4. Missing ROI / optional deps fail soft into metrics, not process death.
+5. Keep API shapes stable so UI and Prometheus consumers barely change later.

@@ -1,11 +1,23 @@
-# Troubleshooting (Slice 1)
+# Troubleshooting
 
 ## `pip install` stuck on “Building wheel for uvloop”
 
 - **Cause:** Older installs used `uvicorn[standard]`, which depends on uvloop. On ARM (Pi 2B) uvloop often builds from source and can hang for a very long time.
 - **Fix:** Ctrl+C the hung build. Pull a revision that depends on plain `uvicorn` (no `[standard]` in default deps), then `pip install -e .`.
 - Do **not** run `pip install -e ".[standard]"` on the 2B.
-- OpenCV / `.[capture]` is unrelated and also heavy on a 2B — install it only when you need V4L2.
+
+## Pi 2B: `.[capture]` / pip OpenCV dies with SIGILL
+
+- **Cause:** Many `opencv-python-headless` / numpy wheels use CPU instructions the Pi 2B (ARMv7) does not have.
+- **Fix:** Do **not** pip-install `.[capture]` on the 2B. Instead:
+  ```bash
+  sudo apt install python3-opencv
+  python3 -m venv --system-site-packages .venv
+  source .venv/bin/activate
+  pip install -e .
+  python -c "import cv2; print(cv2.__version__)"
+  ```
+- Prefer `prefer_mjpeg: true` (default) so the UVC device uses MJPEG over raw YUYV.
 
 ## Service will not start
 
@@ -40,7 +52,7 @@ pip's numpy and opencv-python-headless wheels on Raspberry Pi OS need **system O
 - Is the dongle plugged in? `ls -l /dev/video*`
 - Permissions: user must be in the `video` group (`groups`; re-login after `usermod -aG video $USER`).
 - Wrong index: try `/dev/video0`, `/dev/video1`, or `v4l2-ctl --list-devices`.
-- OpenCV **module** missing (`No module named 'cv2'`): `pip install -e ".[capture]"`.
+- OpenCV **module** missing on Pi 2B: install `python3-opencv` and recreate the venv with `--system-site-packages` (see SIGILL section). On x86 you may use `pip install -e ".[capture]"`.
 - OpenCV installed but import still fails: see **missing libopenblas.so.0** above.
 
 ## Black frames / zero FPS on real HDMI
@@ -71,6 +83,14 @@ Common console capture issues (validate before OCR work):
 - Same Wi-Fi / LAN as the Pi; try `http://<pi-ip>:8741/`.
 - Firewall on the Pi may block the port.
 
+## No lap rows / lap UI stuck at —
+
+- Is a **session** open? Laps are not written without one.
+- Default reader is **mock** — wait for `mock_interval_seconds` (45s) or lower it for tests.
+- For tesseract: confirm `rois.lap_time` covers the last-lap digits; check `lap.last_error` on `/api/laps/current`.
+- Watch `ac_telemetry_detect_failures_total` and `ac_telemetry_detect_drops_total` on `/metrics`.
+- If drops climb, lower `detect.fps` or keep using `mock` until the Pi has headroom.
+
 ## Still stuck
 
-- Collect: `GET /health` JSON, last 50 log lines, `v4l2-ctl --list-devices` output (if hardware), and whether mock works on the same host.
+- Collect: `GET /health` JSON, `GET /api/laps/current`, last 50 log lines, `v4l2-ctl --list-devices` output (if hardware), and whether mock works on the same host.

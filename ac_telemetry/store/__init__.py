@@ -1,8 +1,8 @@
-"""CSV session store — manual start/end with track/car/notes (Slice 1).
+"""CSV session + lap stores.
 
-SQLite is intentionally deferred (Slice 5). Stable columns here so later
-migration stays boring. Capture no longer owns session lifecycle; the phone
-API does. Ending a session may snapshot current capture stats into the row.
+SQLite is intentionally deferred. Stable columns here so later migration
+stays boring. Capture no longer owns session lifecycle; the phone API does.
+Ending a session may snapshot current capture stats into the row.
 """
 
 from __future__ import annotations
@@ -16,8 +16,18 @@ from pathlib import Path
 from typing import Any
 
 from ac_telemetry.capture import CaptureStats
+from ac_telemetry.store.laps import LAP_FIELDS, LapStore
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "LAP_FIELDS",
+    "LapStore",
+    "SESSION_FIELDS",
+    "SessionConflict",
+    "SessionNotFound",
+    "SessionStore",
+]
 
 SESSION_FIELDS = [
     "session_id",
