@@ -1,4 +1,4 @@
-# Default capture profiles for AC telemetry (Slice 0).
+# Default capture + detect config for AC telemetry.
 # Override with AC_TELEMETRY_CONFIG or env vars (see Settings).
 #
 # pi2b: conservative caps for Raspberry Pi 2 Model B (USB 2.0, 1 GB RAM).
@@ -31,9 +31,36 @@ backend: mock
 # V4L2 device path (ignored by mock)
 device: /dev/video0
 
+# Prefer MJPEG FourCC on UVC devices (cheaper on USB2 / Pi 2B than raw YUYV).
+prefer_mjpeg: true
+
 # HTTP bind — 0.0.0.0 is LAN-friendly on the Pi; 127.0.0.1 is fine for local dev
 host: "0.0.0.0"
 port: 8741
 
-# Where session CSV files are written (API-owned sessions; Slice 1)
+# Where session + lap CSV files are written
 data_dir: data/sessions
+
+# Named HUD ROIs. Missing keys = that signal is disabled.
+# Coordinates are for 1280x720; recalibrate on your capture.
+# Point lap_time at the last-lap (completed) time display when mode is last_lap.
+rois:
+  lap_time:
+    x: 40
+    y: 20
+    width: 160
+    height: 36
+
+# Detection runs on a separate thread at a much lower FPS than capture.
+detect:
+  enabled: true
+  fps: 2.0
+  debounce_reads: 2
+  drop_under_pressure: true
+  lap_time:
+    # mock: synthetic laps (no OCR). tesseract: optional OCR (heavy on Pi 2B).
+    reader: mock
+    mode: last_lap
+    mock_interval_seconds: 45
+    min_lap_ms: 30000
+    reset_slack_ms: 5000
