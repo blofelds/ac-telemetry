@@ -1,4 +1,4 @@
-"""Process entrypoint: wire settings, CSV store, capture loop, HTTP server."""
+"""Process entrypoint: wire settings, CSV store, capture, detect, HTTP server."""
 
 from __future__ import annotations
 
@@ -9,10 +9,12 @@ import sys
 
 import uvicorn
 
+from ac_telemetry import metrics
 from ac_telemetry.api import create_app
 from ac_telemetry.capture import CaptureService
+from ac_telemetry.detect import DetectService
 from ac_telemetry.settings import get_settings, load_settings
-from ac_telemetry.store import SessionStore
+from ac_telemetry.store import LapStore, SessionStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,10 +27,22 @@ def build(settings=None):
     settings = settings or get_settings()
     store = SessionStore(settings.data_dir)
     store.ensure()
+    lap_store = LapStore(settings.data_dir)
+    lap_store.ensure()
     capture = CaptureService(settings=settings)
-    # Slice 1: sessions are created/ended via the phone API, not capture hooks.
-    app = create_app(settings, capture, store)
-    return settings, capture, app
+
+    detect = DetectService(
+        settings=settings,
+        get_frame=capture.get_latest_frame,
+        get_session_id=lambda: (
+            (store.current_session() or {}).get("session_id")
+        ),
+        record_lap=lap_store.append_lap,
+        on_metrics=metrics.observe_detect,
+    )
+
+    app = create_app(settings, capture, store, lap_store=lap_store, detect=detect)
+    return settings, capture, detect, app
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -66,10 +80,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.port:
         settings.port = args.port
 
-    settings, capture, app = build(settings)
+    settings, capture, detect, app = build(settings)
 
     def _shutdown(*_args) -> None:
-        logger.info("Shutting down capture…")
+        logger.info("Shutting down…")
+        detect.stop()
         capture.stop()
 
     signal.signal(signal.SIGINT, _shutdown)
@@ -77,17 +92,20 @@ def main(argv: list[str] | None = None) -> None:
 
     if not args.no_capture:
         capture.start()
+    detect.start()
 
     logger.info(
-        "Listening on http://%s:%s (backend=%s profile=%s)",
+        "Listening on http://%s:%s (backend=%s profile=%s detect=%s)",
         settings.host,
         settings.port,
         settings.backend,
         settings.profile,
+        settings.detect.lap_time.reader if settings.detect.enabled else "off",
     )
     try:
         uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
     finally:
+        detect.stop()
         capture.stop()
 
 
