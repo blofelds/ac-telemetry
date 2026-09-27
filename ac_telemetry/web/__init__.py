@@ -1,4 +1,4 @@
-"""Phone-friendly LAN UI: sessions, live lap time, capture status."""
+"""Phone-friendly LAN UI: sessions, live lap time, capture status, ROI debug."""
 
 STATUS_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -175,7 +175,8 @@ STATUS_HTML = """<!DOCTYPE html>
 
   <footer>
     <a href="/health">/health</a> · <a href="/metrics">/metrics</a> ·
-    <a href="/api/sessions">/api/sessions</a> · <a href="/api/laps">/api/laps</a>
+    <a href="/api/sessions">/api/sessions</a> · <a href="/api/laps">/api/laps</a> ·
+    <a href="/debug">ROI debug</a>
   </footer>
 
   <script>
@@ -328,6 +329,153 @@ STATUS_HTML = """<!DOCTYPE html>
     refreshHistory();
     setInterval(refreshStatus, 2000);
     setInterval(refreshHistory, 10000);
+  </script>
+</body>
+</html>
+"""
+
+DEBUG_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>AC Telemetry — ROI debug</title>
+  <style>
+    :root {
+      --bg: #10151b; --panel: #1a222c; --text: #e8eef4; --muted: #8b9aab;
+      --bad: #d35a5a; --accent: #4a8fd4; --line: #2a3542; --lap: #e6c07b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 1rem 1rem 2.5rem;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100vh;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.25rem; }
+    .sub { color: var(--muted); margin: 0 0 1rem; font-size: 0.9rem; }
+    .err {
+      background: #2a1818; border: 1px solid #5a2a2a; color: var(--bad);
+      border-radius: 6px; padding: 0.75rem 0.85rem; margin: 0 0 1rem;
+      font-size: 0.9rem; white-space: pre-wrap; max-width: 960px;
+    }
+    .err.empty { display: none; }
+    .meta {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 0.5rem; max-width: 960px; margin-bottom: 1rem;
+    }
+    .stat {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 6px; padding: 0.65rem 0.75rem;
+    }
+    .stat .label { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; }
+    .stat .value { margin-top: 0.15rem; font-variant-numeric: tabular-nums; font-size: 0.95rem; }
+    figure { margin: 0 0 1.25rem; max-width: 960px; }
+    figcaption { color: var(--muted); font-size: 0.8rem; margin: 0.4rem 0 0.5rem; }
+    img {
+      display: block; max-width: 100%; height: auto;
+      background: #000; border: 1px solid var(--line); border-radius: 4px;
+    }
+    .crop img { max-width: 320px; image-rendering: pixelated; }
+    a { color: var(--accent); }
+    footer { margin-top: 1.5rem; color: var(--muted); font-size: 0.78rem; }
+    code { font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <h1>ROI debug</h1>
+  <p class="sub">
+    Latest capture frame + <code>rois.lap_time</code> overlay.
+    Auto-refreshes. No ffmpeg — JPEG from the in-memory handoff.
+  </p>
+
+  <div class="err empty" id="last-error"></div>
+
+  <div class="meta">
+    <div class="stat"><div class="label">Backend</div><div class="value" id="backend">…</div></div>
+    <div class="stat"><div class="label">Frame size</div><div class="value" id="size">…</div></div>
+    <div class="stat"><div class="label">ROI lap_time</div><div class="value" id="roi">…</div></div>
+    <div class="stat"><div class="label">Displayed</div><div class="value" id="displayed" style="color:var(--lap)">…</div></div>
+    <div class="stat"><div class="label">Reader</div><div class="value" id="reader">…</div></div>
+    <div class="stat"><div class="label">Session</div><div class="value" id="session">…</div></div>
+  </div>
+
+  <figure>
+    <figcaption>Overlay — green box is <code>rois.lap_time</code>
+      (<a href="/api/debug/overlay/lap_time.jpg" target="_blank">raw JPEG</a>)</figcaption>
+    <img id="overlay" alt="Frame with lap_time ROI" src="/api/debug/overlay/lap_time.jpg" />
+  </figure>
+
+  <figure class="crop">
+    <figcaption>ROI crop
+      (<a href="/api/debug/roi/lap_time.jpg" target="_blank">/api/debug/roi/lap_time.jpg</a>)
+      · full frame
+      (<a href="/api/debug/frame.jpg" target="_blank">/api/debug/frame.jpg</a>)</figcaption>
+    <img id="crop" alt="lap_time ROI crop" src="/api/debug/roi/lap_time.jpg" />
+  </figure>
+
+  <p class="sub" style="max-width:960px">
+    Empty lap UI usually means: OCR miss, wrong ROI, no open session
+    (laps not persisted), or reader/import error — see <code>last_error</code> above.
+  </p>
+
+  <footer><a href="/">← Status UI</a></footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function bust(img) {
+      const base = img.getAttribute("src").split("?")[0];
+      img.src = base + "?t=" + Date.now();
+    }
+
+    async function refreshMeta() {
+      try {
+        const r = await fetch("/api/status");
+        const d = await r.json();
+        const lap = d.lap || {};
+        const errEl = $("last-error");
+        const err = lap.last_error || d.last_error || "";
+        if (err) {
+          errEl.textContent = "last_error: " + err;
+          errEl.classList.remove("empty");
+        } else {
+          errEl.textContent = "";
+          errEl.classList.add("empty");
+        }
+        $("backend").textContent = d.backend || "—";
+        $("size").textContent =
+          (d.width && d.height) ? (d.width + "×" + d.height) : "—";
+        $("displayed").textContent = lap.displayed_time || "—";
+        $("reader").textContent =
+          lap.enabled === false ? "off" : (lap.reader || "—");
+        $("session").textContent =
+          d.session_id || (d.session && d.session.session_id) || "(none)";
+      } catch (e) {
+        const errEl = $("last-error");
+        errEl.textContent = "status unreachable: " + e;
+        errEl.classList.remove("empty");
+      }
+      try {
+        const r = await fetch("/api/debug/info");
+        const d = await r.json();
+        const roi = d.roi || {};
+        if (roi.x != null) {
+          $("roi").textContent =
+            roi.x + "," + roi.y + " " + roi.width + "×" + roi.height;
+        } else {
+          $("roi").textContent = "(missing)";
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    function refreshImages() {
+      bust($("overlay"));
+      bust($("crop"));
+    }
+
+    refreshMeta();
+    setInterval(refreshMeta, 2000);
+    setInterval(refreshImages, 1500);
   </script>
 </body>
 </html>

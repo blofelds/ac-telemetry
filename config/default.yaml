@@ -24,9 +24,11 @@ profiles:
 # Active profile name (pi2b | pi5)
 profile: pi2b
 
-# Capture backend: mock | v4l2
-# Use mock until the HDMI capture dongle arrives; switch to v4l2 on the Pi.
-backend: mock
+# Capture backend: v4l2 | mock
+# Default is v4l2 for the Pi + HDMI dongle. Use mock on a laptop / CI:
+#   ac-telemetry --backend mock
+#   or AC_TELEMETRY_BACKEND=mock
+backend: v4l2
 
 # V4L2 device path (ignored by mock)
 device: /dev/video0
@@ -42,10 +44,12 @@ port: 8741
 data_dir: data/sessions
 
 # Named HUD ROIs. Missing keys = that signal is disabled.
-# Coordinates are for 1280x720; recalibrate on your capture.
-# Point lap_time at the last-lap (completed) time display when mode is last_lap.
+# Coordinates are for 1280x720; recalibrate on your capture (see /debug).
+# See docs/ROI.md for HUD key mapping from acc-telemetry.
 rois:
-  # Scaled from acc-telemetry assetto_corsa_1080p.last_lap_time for pi2b 720p (×2/3).
+  # Completed lap time HUD ("last lap"), not the running timer.
+  # Mapped from acc-telemetry assetto_corsa_1080p.last_lap_time (1080p→720p ×2/3).
+  # Used when detect.lap_time.mode is last_lap.
   lap_time:
     x: 64
     y: 284
