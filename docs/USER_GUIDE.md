@@ -5,8 +5,8 @@ How to run **ac-telemetry**: capture (mock or V4L2), sessions, and lap-time logg
 ## Requirements
 
 - Python 3.11+
-- For **mock** (default): no camera, no OpenCV
-- For **V4L2 on Pi 2B**: `apt` OpenCV + venv `--system-site-packages` (see below)
+- For **mock** (laptop/CI): `ac-telemetry --backend mock` — no camera, no OpenCV
+- For **V4L2 on Pi 2B** (YAML default): `apt` OpenCV + venv `--system-site-packages` (see below)
 - Optional OCR: `tesseract-ocr` + `pip install -e ".[ocr]"`
 
 ## Install (laptop / mock)
@@ -39,13 +39,13 @@ Prefer MJPEG (`prefer_mjpeg: true` in `config/default.yaml`) so USB2 is not floo
 ## Run with mock capture
 
 ```bash
-ac-telemetry
-# or: ac-telemetry --host 127.0.0.1
+ac-telemetry --backend mock
+# or: AC_TELEMETRY_BACKEND=mock ac-telemetry --host 127.0.0.1
 ```
 
 1. Open `http://127.0.0.1:8741/` — lap strip + session form + capture status.
 2. **Start session** (track / car / notes).
-3. With default `detect.lap_time.reader: mock`, a synthetic lap appears every ~45s.
+3. With `detect.lap_time.reader: mock`, a synthetic lap appears every ~45s.
 4. Check `data/sessions/laps.csv` and `GET /api/laps`.
 5. **End session** when done.
 
@@ -55,12 +55,14 @@ For faster mock laps while testing, set `detect.lap_time.mock_interval_seconds: 
 
 ```bash
 v4l2-ctl --list-devices
-ac-telemetry --backend v4l2
+# backend defaults to v4l2 in config/default.yaml
+ac-telemetry
 ```
 
-1. Calibrate `rois.lap_time` in `config/default.yaml` for your 720p HUD (last-lap display).
-2. Keep `reader: mock` until capture is stable; then optionally switch to `tesseract`.
-3. Start a session from the phone UI before you drive.
+1. Open `http://<pi-ip>:8741/debug` and confirm the green box covers the **last-lap** digits (see [`ROI.md`](ROI.md)).
+2. Adjust `rois.lap_time` in `config/default.yaml` if the scaled ROI is wrong, then restart.
+3. Keep `reader: mock` until capture is stable; then optionally switch to `tesseract`.
+4. Start a session from the phone UI before you drive.
 
 ### systemd
 
@@ -70,14 +72,16 @@ See [`../deploy/ac-telemetry.service`](../deploy/ac-telemetry.service). Pi user 
 
 | Piece | Detail |
 | --- | --- |
-| ROI | `rois.lap_time` — tiny crop only |
+| ROI | `rois.lap_time` — completed last-lap HUD (see [`ROI.md`](ROI.md)) |
 | Detect FPS | `detect.fps` (default 2) — separate from capture FPS |
-| Readers | `mock` (default) or `tesseract` (optional extra) |
+| Readers | `mock` or `tesseract` (optional extra; set in YAML) |
 | Modes | `last_lap` (record when last-lap text changes) or `current_timer` (record on reset) |
 | CSV | `data/sessions/laps.csv` |
 | Live | UI lap strip + `GET /api/laps/current` |
+| Calibrate | `/debug` · `/api/debug/frame.jpg` · `/api/debug/roi/lap_time.jpg` |
 
-Laps are written only while a session is open.
+Laps are written only while a session is open. If the UI shows `—`, check
+`last_error` on `/debug` (OCR miss, wrong ROI, no session, or reader error).
 
 ## Sessions API
 
