@@ -76,6 +76,8 @@ Do **not** install `.[standard]` on the 2B (that reintroduces uvloop). On x86 la
 
 `.[capture]` (OpenCV headless) is a **separate**, heavier install — only when you need real V4L2; expect it to take a while on a 2B. Mock capture needs only `pip install -e .`.
 
+pip numpy/opencv on Raspberry Pi OS also need **system OpenBLAS** (`sudo apt install libopenblas0`; see [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) if `import cv2` fails with `libopenblas.so.0`). `apt python3-opencv` is optional when the pip wheel is already installed.
+
 See [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) if install still hangs.
 
 ---
