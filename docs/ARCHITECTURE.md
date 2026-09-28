@@ -50,7 +50,7 @@ Profiles are **named** (`pi2b`, `pi5`) so board limits are not sprinkled through
 1. Capture publishes the newest frame under a lock (replace, never queue).
 2. Detect wakes at `detect.fps` (default 2). If a prior tick is still busy and `drop_under_pressure` is on, the tick is dropped and counted.
 3. Crop only `rois.lap_time` (copy the tiny rectangle, not the full frame twice beyond that).
-4. Reader is pluggable (`mock` | `tesseract`). Missing ROI keys fail soft for OCR; mock ignores pixels.
+4. Reader is pluggable (`mock` | `tesseract` | `template`). Missing ROI keys fail soft for pixel readers; mock ignores pixels.
 5. Debounce requires N identical reads before recording.
 6. Persist only when a session is open.
 
@@ -59,7 +59,8 @@ Profiles are **named** (`pi2b`, `pi5`) so board limits are not sprinkled through
 | Reader | Needs frame | Notes |
 | --- | --- | --- |
 | `mock` | No | Synthetic last-lap times for store/API proof |
-| `tesseract` | Yes | Optional `[ocr]` extra + system tesseract; heavy on 2B |
+| `tesseract` | Yes | Optional `[ocr]` extra + system tesseract; heavy on 2B; may fail on AC block font |
+| `template` (alias `assetto_corsa`) | Yes | OpenCV `matchTemplate` backup using `templates/lap_time_digits/`; no OCR deps beyond OpenCV |
 
 ### Modes
 

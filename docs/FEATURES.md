@@ -29,7 +29,7 @@ Honest inventory of what ships now versus what is planned.
 
 - Configurable `rois.lap_time` rectangle in YAML.
 - Low-FPS detect worker (default 2 fps) with debounce and drop-under-pressure.
-- Pluggable readers: **`mock`** (default, no OCR) and optional **`tesseract`**.
+- Pluggable readers: **`mock`**, **`tesseract`** (YAML default), and **`template`** / `assetto_corsa` (OpenCV digit backup when OCR fails on AC block font).
 - Modes: `last_lap` (default) or `current_timer` (record on timer reset).
 - Persist rows to `laps.csv`; live state on UI + `GET /api/laps/current`.
 - Metrics: detect latency, failures, drops, laps recorded, signal gauge.
@@ -64,5 +64,5 @@ Sessions with human metadata come **before** lap rows so every lap has a parent 
 - Capture proof + health/metrics first; sessions were briefly capture-tied stubs.
 - Decoupled sessions from capture hooks; phone owns start/end.
 - Lap detect runs on a **separate thread**, samples the latest frame, crops a tiny ROI, and never queues frames (drop old under pressure).
-- Chose **mock reader default** so Pi 2B can validate CSV/UI without tesseract.
+- Chose **mock** for early CSV/UI proof; YAML now defaults to **tesseract** once ROI is in place, with **template** as an optional backup for AC’s block font.
 - Prefer **apt OpenCV + system-site-packages** on 2B after pip wheels SIGILL'd.

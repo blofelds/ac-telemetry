@@ -4,7 +4,7 @@ Live **HDMI capture** telemetry for **Assetto Corsa on PS5**, running headless o
 
 This is **not** a video-file extractor. Sister project [blofelds/acc-telemetry](https://github.com/blofelds/acc-telemetry) analyzes recorded gameplay offline. **ac-telemetry** sits on the Pi, opens a USB UVC capture device, logs **lap times** to CSV, and exposes health, Prometheus metrics, and a LAN phone UI.
 
-**Current:** capture + sessions + **lap-time detection** (mock reader by default; optional tesseract OCR). No sectors / throttle / brake / SQLite yet.
+**Current:** capture + sessions + **lap-time detection** (`tesseract` in YAML by default; `mock` and OpenCV `template` backup available). No sectors / throttle / brake / SQLite yet.
 
 ---
 
@@ -119,7 +119,7 @@ config/
 | `detect.enabled` | YAML | `true` |
 | `detect.fps` | YAML | `2.0` |
 | `detect.debounce_reads` | YAML | `2` |
-| `detect.lap_time.reader` | YAML | `mock` (`tesseract` optional) |
+| `detect.lap_time.reader` | YAML | `tesseract` (`mock` · `template` / `assetto_corsa` also available) |
 | `detect.lap_time.mode` | YAML | `last_lap` (or `current_timer`) |
 | `prefer_mjpeg` | YAML / env | `true` |
 
@@ -163,7 +163,7 @@ Sessions API unchanged (`POST /api/sessions`, etc.).
 | Mock + V4L2 capture | Sectors (iff cheap) |
 | Sessions (track/car/notes) | SQLite |
 | Lap times → CSV + live UI | Driving signals on Pi 5 |
-| Mock reader + optional tesseract | Grafana starter |
+| Mock / tesseract / template readers | Grafana starter |
 | Detect latency / failure / lap metrics | Tailscale / auth |
 
 ---
@@ -176,7 +176,7 @@ See [`docs/README.md`](docs/README.md).
 
 ## Limitations
 
-- Default lap path is **mock** until you calibrate ROI + enable tesseract (or another reader).
+- Lap readers: prove with **mock**, calibrate ROI, try **tesseract**; use **template** only if OCR fails on AC’s block font (see [`docs/ROI.md`](docs/ROI.md)).
 - Tesseract on Pi 2B is best-effort; keep ROI tiny or stay on mock while validating capture.
 - HDCP / splitter quirks can black-screen the capture path.
 - Trusted home LAN assumed (no auth).

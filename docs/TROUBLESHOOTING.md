@@ -89,16 +89,17 @@ Empty displayed/recorded time usually means one of:
 
 | Cause | Check |
 | --- | --- |
-| OCR miss | Digits present but unreadable → tune ROI / see failures metric |
+| OCR / template miss | Digits present but unreadable → tune ROI; try `reader: template` if Tesseract fails on AC block font |
 | Wrong ROI | Scaled coords miss your capture crop |
 | No session | Open a session before expecting CSV rows |
-| Reader error | Missing tesseract/OpenCV import |
+| Reader error | Missing tesseract/OpenCV/templates |
 
 - Open **`http://<pi-ip>:8741/debug`** — overlay + ROI crop + `last_error`.
 - Raw JPEGs: `/api/debug/frame.jpg`, `/api/debug/roi/lap_time.jpg`.
 - Is a **session** open? Laps are not written without one (displayed OCR can still update).
 - Mock reader: wait for `mock_interval_seconds` (45s) or lower it for tests (`--backend mock` if not using V4L2).
 - For tesseract: confirm the green box covers the **last-lap** digits; see [`ROI.md`](ROI.md).
+- For template backup: set `detect.lap_time.reader: template` (needs apt OpenCV + `templates/lap_time_digits/`).
 - Also: `lap.last_error` on `/api/laps/current` or `/api/debug/info`.
 - Watch `ac_telemetry_detect_failures_total` and `ac_telemetry_detect_drops_total` on `/metrics`.
 - If drops climb, lower `detect.fps` or keep using `mock` until the Pi has headroom.
