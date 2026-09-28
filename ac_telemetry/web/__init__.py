@@ -377,6 +377,13 @@ DEBUG_HTML = """<!DOCTYPE html>
     }
     .crop img { max-width: 320px; image-rendering: pixelated; }
     a { color: var(--accent); }
+    .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 0 0 1.25rem; max-width: 960px; }
+    .btn-download {
+      display: inline-block; text-decoration: none;
+      background: var(--accent); color: #061018; font-weight: 600;
+      border-radius: 6px; padding: 0.7rem 1rem; font-size: 0.95rem;
+    }
+    .btn-download:hover { filter: brightness(1.08); }
     footer { margin-top: 1.5rem; color: var(--muted); font-size: 0.78rem; }
     code { font-size: 0.85em; }
   </style>
@@ -399,9 +406,22 @@ DEBUG_HTML = """<!DOCTYPE html>
     <div class="stat"><div class="label">Session</div><div class="value" id="session">…</div></div>
   </div>
 
+  <div class="actions">
+    <a class="btn-download" id="btn-download"
+       href="/api/debug/rois.jpg"
+       download="ac-telemetry-rois.jpg">
+      Download full-res ROI screenshot
+    </a>
+  </div>
+  <p class="sub" style="margin-top:-0.5rem; max-width:960px">
+    Saves the capture-resolution JPEG (all configured ROI boxes drawn) so you
+    can measure pixels locally — the preview below is scaled to the page.
+    Direct URL: <code>/api/debug/rois.jpg</code>
+  </p>
+
   <figure>
-    <figcaption>Overlay — green box is <code>rois.lap_time</code>
-      (<a href="/api/debug/overlay/lap_time.jpg" target="_blank">raw JPEG</a>)</figcaption>
+    <figcaption>Overlay preview — green box is <code>rois.lap_time</code>
+      (<a href="/api/debug/overlay/lap_time.jpg" target="_blank">inline JPEG</a>)</figcaption>
     <img id="overlay" alt="Frame with lap_time ROI" src="/api/debug/overlay/lap_time.jpg" />
   </figure>
 

@@ -56,13 +56,23 @@ def create_app(
         """ROI calibration page: overlay + crop + last_error."""
         return DEBUG_HTML
 
-    def _jpeg_or_error(payload: bytes | None, *, missing: str) -> Response:
+    def _jpeg_or_error(
+        payload: bytes | None,
+        *,
+        missing: str,
+        filename: str | None = None,
+    ) -> Response:
         if payload is None:
             raise HTTPException(status_code=503, detail=missing)
+        headers: dict[str, str] = {"Cache-Control": "no-store"}
+        if filename:
+            # Attachment so browsers save the full-resolution JPEG instead of
+            # showing a CSS-scaled preview (needed for measuring ROI pixels).
+            headers["Content-Disposition"] = f'attachment; filename="{filename}"'
         return Response(
             content=payload,
             media_type="image/jpeg",
-            headers={"Cache-Control": "no-store"},
+            headers=headers,
         )
 
     @app.get("/api/debug/info")
@@ -136,12 +146,31 @@ def create_app(
             )
         try:
             frame = capture.get_latest_frame_copy()
-            payload = debug_frames.encode_overlay_jpeg(frame, roi)
+            payload = debug_frames.encode_overlay_jpeg(frame, roi, name=name)
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return _jpeg_or_error(
             payload,
             missing="No frame yet (is capture running? mock has no pixels)",
+        )
+
+    @app.get("/api/debug/rois.jpg")
+    def api_debug_rois_download() -> Response:
+        """Full-resolution JPEG with every configured ROI overlaid (download).
+
+        Pi 2B-friendly: encodes a copy of the latest capture handoff via
+        ``cv2.imencode`` (no ffmpeg). ``Content-Disposition: attachment`` so
+        phones/desktops save the capture-resolution file for measuring ROIs.
+        """
+        try:
+            frame = capture.get_latest_frame_copy()
+            payload = debug_frames.encode_rois_overlay_jpeg(frame, settings.rois)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return _jpeg_or_error(
+            payload,
+            missing="No frame yet (is capture running? mock has no pixels)",
+            filename="ac-telemetry-rois.jpg",
         )
 
     @app.get("/health")
