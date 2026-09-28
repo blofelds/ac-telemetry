@@ -1,4 +1,4 @@
-"""Pluggable lap-time readers: mock (always available) and optional tesseract."""
+"""Pluggable lap-time readers: mock, optional tesseract, and OpenCV templates."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
 logger = logging.getLogger(__name__)
@@ -166,16 +167,110 @@ class TesseractLapTimeReader:
         return LapTimeReading(ok=True, text=text, lap_time_ms=ms)
 
 
-ReaderName = Literal["mock", "tesseract"]
+class TemplateLapTimeReader:
+    """OpenCV matchTemplate on AC block-font digit crops (Pi 2B-friendly).
+
+    Backup when Tesseract misreads Assetto Corsa's block font — PNG templates
+    do not help OCR. Uses the same glyph segmentation/matching approach as
+    acc-telemetry ``assetto_corsa`` speed/lap readers (no heavy OCR deps).
+    """
+
+    name = "template"
+
+    def __init__(
+        self,
+        templates_dir: str | Path,
+        *,
+        match_threshold: float = 0.50,
+    ) -> None:
+        self.templates_dir = Path(templates_dir)
+        self.match_threshold = float(match_threshold)
+        self._matcher: Any | None = None
+        self._load_error = ""
+
+    def _ensure(self) -> bool:
+        if self._matcher is not None:
+            return True
+        if self._load_error:
+            return False
+        try:
+            import cv2  # noqa: F401
+            import numpy  # noqa: F401
+
+            from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
+
+            self._matcher = DigitTemplateMatcher(
+                self.templates_dir,
+                match_threshold=self.match_threshold,
+            )
+            if not self._matcher.has_templates:
+                self._load_error = (
+                    f"digit templates incomplete under {self.templates_dir}"
+                )
+                self._matcher = None
+                return False
+            return True
+        except Exception as exc:  # noqa: BLE001 — soft-fail into metrics
+            self._load_error = (
+                f"template reader unavailable ({exc}). "
+                "Need apt/system OpenCV + templates under "
+                f"{self.templates_dir}, or use reader: mock|tesseract."
+            )
+            logger.warning("%s", self._load_error)
+            return False
+
+    def read(self, roi_bgr: Any | None) -> LapTimeReading:
+        if not self._ensure():
+            return LapTimeReading(ok=False, error=self._load_error)
+        if roi_bgr is None:
+            return LapTimeReading(ok=False, error="empty ROI (no frame)")
+        assert self._matcher is not None
+        try:
+            raw = self._matcher.read_symbols(roi_bgr)
+        except Exception as exc:  # noqa: BLE001
+            return LapTimeReading(ok=False, error=f"template match failed: {exc}")
+        if not raw:
+            return LapTimeReading(ok=False, error="no glyphs matched in ROI")
+        parsed = parse_lap_time_text(raw)
+        if parsed is None:
+            return LapTimeReading(
+                ok=False,
+                text=raw,
+                error="no lap-time pattern in template symbols",
+            )
+        text, ms = parsed
+        return LapTimeReading(ok=True, text=text, lap_time_ms=ms)
+
+
+ReaderName = Literal["mock", "tesseract", "template", "assetto_corsa"]
+
+
+def resolve_templates_dir(templates_dir: str | Path | None = None) -> Path:
+    """Resolve digit template dir relative to repo root when path is relative."""
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    if templates_dir is None or str(templates_dir).strip() == "":
+        return repo_root / "templates" / "lap_time_digits" / "ac_720p"
+    path = Path(templates_dir)
+    if path.is_absolute():
+        return path
+    return (repo_root / path).resolve()
 
 
 def build_lap_time_reader(
-    name: ReaderName,
+    name: ReaderName | str,
     *,
     mock_interval_seconds: float = 45.0,
+    templates_dir: str | Path | None = None,
+    match_threshold: float = 0.50,
 ) -> LapTimeReader:
     if name == "mock":
         return MockLapTimeReader(interval_seconds=mock_interval_seconds)
     if name == "tesseract":
         return TesseractLapTimeReader()
+    # assetto_corsa is an alias used in acc-telemetry ROI profiles.
+    if name in ("template", "assetto_corsa"):
+        return TemplateLapTimeReader(
+            resolve_templates_dir(templates_dir),
+            match_threshold=match_threshold,
+        )
     raise ValueError(f"Unknown lap_time reader: {name!r}")
