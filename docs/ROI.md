@@ -26,8 +26,13 @@ trusting OCR.
 1. Run with real capture (`backend: v4l2`, default).
 2. Open `http://<pi-ip>:8741/debug`.
 3. Confirm the green box covers the last-lap digits.
-4. Adjust `rois.lap_time` `{x,y,width,height}` and restart (or reload config by restarting the service).
-5. Optional raw JPEGs: `/api/debug/frame.jpg`, `/api/debug/roi/lap_time.jpg`, `/api/debug/overlay/lap_time.jpg`.
+4. **Download full-res ROI screenshot** (button on `/debug`, or
+   `GET /api/debug/rois.jpg`) — attachment JPEG at **capture resolution** with
+   every configured ROI drawn. Open it locally to measure pixel coords; the
+   on-page preview is CSS-scaled and is not for measuring.
+5. Adjust `rois.lap_time` `{x,y,width,height}` and restart (or reload config by restarting the service).
+6. Optional inline JPEGs: `/api/debug/frame.jpg`, `/api/debug/roi/lap_time.jpg`,
+   `/api/debug/overlay/lap_time.jpg`.
 
 JPEG comes from the in-memory latest-frame handoff (`cv2.imencode`). No ffmpeg;
 encode runs outside the capture lock.
