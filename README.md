@@ -92,7 +92,8 @@ Default listen address is `0.0.0.0:8741`. Systemd sketch: [`deploy/ac-telemetry.
 
 Calibrate `rois.lap_time` on the Pi: open
 [`http://<pi-ip>:8741/debug`](http://127.0.0.1:8741/debug)
-(or `GET /api/debug/frame.jpg` and `GET /api/debug/roi/lap_time.jpg`).
+and use **Download full-res ROI screenshot** (or `GET /api/debug/rois.jpg`)
+to save a capture-resolution JPEG with ROI boxes for measuring locally.
 
 ---
 
@@ -147,7 +148,8 @@ Capture + session metrics, plus:
 | --- | --- | --- |
 | `GET` | `/api/laps/current` | Live displayed / last recorded lap |
 | `GET` | `/api/laps` | Recent lap rows (optional `session_id`) |
-| `GET` | `/debug` | ROI calibration page (overlay + crop + `last_error`) |
+| `GET` | `/debug` | ROI calibration page (overlay + crop + download + `last_error`) |
+| `GET` | `/api/debug/rois.jpg` | Full-res JPEG download (all ROI overlays; attachment) |
 | `GET` | `/api/debug/frame.jpg` | Full latest frame JPEG |
 | `GET` | `/api/debug/roi/lap_time.jpg` | `rois.lap_time` crop JPEG |
 | `GET` | `/api/debug/overlay/lap_time.jpg` | Frame with ROI rectangle |
