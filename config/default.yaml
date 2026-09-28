@@ -63,9 +63,18 @@ detect:
   debounce_reads: 2
   drop_under_pressure: true
   lap_time:
-    # mock: synthetic laps (no OCR). tesseract: optional OCR (heavy on Pi 2B).
+    # Readers (pick one; template is a backup, not required):
+    #   mock      — synthetic laps (no pixels / OCR); good for laptop + plumbing tests
+    #   tesseract — OCR (default). Calibrate ROI first; may fail on AC block font
+    #   template  — OpenCV matchTemplate on digit PNGs (alias: assetto_corsa).
+    #               Use when Tesseract misreads AC's block font. Templates come from
+    #               acc-telemetry AC 1080p speed digits; ac_720p is scaled ×2/3 for
+    #               pi2b 720p capture (see templates/lap_time_digits/README.md).
     reader: tesseract
     mode: last_lap
     mock_interval_seconds: 45
     min_lap_ms: 30000
     reset_slack_ms: 5000
+    # Only used when reader is template / assetto_corsa:
+    templates_dir: templates/lap_time_digits/ac_720p
+    match_threshold: 0.50
