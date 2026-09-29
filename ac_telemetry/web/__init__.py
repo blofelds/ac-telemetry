@@ -384,6 +384,38 @@ DEBUG_HTML = """<!DOCTYPE html>
       border-radius: 6px; padding: 0.7rem 1rem; font-size: 0.95rem;
     }
     .btn-download:hover { filter: brightness(1.08); }
+    .glyph-panel {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 6px; padding: 0.85rem 1rem; margin: 0 0 1.25rem; max-width: 960px;
+    }
+    .glyph-panel label {
+      display: block; color: var(--muted); font-size: 0.72rem;
+      text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 0.35rem;
+    }
+    .glyph-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .glyph-row input, .glyph-row select {
+      background: #0f1419; color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 0.55rem 0.65rem; font: inherit; font-size: 1rem;
+    }
+    .glyph-row button {
+      border: 0; border-radius: 6px; font: inherit; font-weight: 600;
+      font-size: 0.95rem; cursor: pointer; padding: 0.65rem 1rem;
+      background: #3dba7a; color: #062016;
+    }
+    .glyph-row button.secondary { background: #2a3542; color: var(--text); }
+    .glyph-row button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .glyph-msg { margin: 0.55rem 0 0; font-size: 0.85rem; color: var(--muted); min-height: 1.2em; }
+    .glyph-msg.err { color: var(--bad); }
+    .glyph-msg.ok { color: #3dba7a; }
+    .crop-wrap {
+      position: relative; display: inline-block; max-width: 100%;
+      cursor: crosshair; user-select: none; touch-action: none;
+    }
+    .crop-wrap img { max-width: 320px; image-rendering: pixelated; }
+    .sel {
+      position: absolute; border: 1px solid #e6c07b; background: rgba(230, 192, 123, 0.2);
+      pointer-events: none; display: none;
+    }
     footer { margin-top: 1.5rem; color: var(--muted); font-size: 0.78rem; }
     code { font-size: 0.85em; }
   </style>
@@ -419,6 +451,29 @@ DEBUG_HTML = """<!DOCTYPE html>
     Direct URL: <code>/api/debug/rois.jpg</code>
   </p>
 
+  <div class="glyph-panel">
+    <label for="glyph-symbol">Save glyph from lap_time ROI</label>
+    <p class="sub" style="margin:0 0 0.65rem">
+      Writes a PNG under <code id="glyphs-dir">glyphs_dir</code>
+      (bundled <code>ac_*</code> templates may be ACC — capture real AC digits here).
+      Optional: click-drag on the ROI crop below to save a sub-rect; clear selection
+      to save the full strip. Leave symbol empty for <code>pending/&lt;timestamp&gt;.png</code>.
+    </p>
+    <div class="glyph-row">
+      <select id="glyph-symbol" aria-label="Symbol">
+        <option value="">(pending dump)</option>
+        <option>0</option><option>1</option><option>2</option><option>3</option>
+        <option>4</option><option>5</option><option>6</option><option>7</option>
+        <option>8</option><option>9</option>
+        <option value=":">:</option>
+        <option value=".">.</option>
+      </select>
+      <button type="button" id="btn-save-glyph">Save glyph</button>
+      <button type="button" class="secondary" id="btn-clear-sel">Clear selection</button>
+    </div>
+    <p class="glyph-msg" id="glyph-msg"></p>
+  </div>
+
   <figure>
     <figcaption>Overlay preview — green box is <code>rois.lap_time</code>
       (<a href="/api/debug/overlay/lap_time.jpg" target="_blank">inline JPEG</a>)</figcaption>
@@ -429,8 +484,12 @@ DEBUG_HTML = """<!DOCTYPE html>
     <figcaption>ROI crop
       (<a href="/api/debug/roi/lap_time.jpg" target="_blank">/api/debug/roi/lap_time.jpg</a>)
       · full frame
-      (<a href="/api/debug/frame.jpg" target="_blank">/api/debug/frame.jpg</a>)</figcaption>
-    <img id="crop" alt="lap_time ROI crop" src="/api/debug/roi/lap_time.jpg" />
+      (<a href="/api/debug/frame.jpg" target="_blank">/api/debug/frame.jpg</a>)
+      · drag to select a single glyph</figcaption>
+    <div class="crop-wrap" id="crop-wrap">
+      <img id="crop" alt="lap_time ROI crop" src="/api/debug/roi/lap_time.jpg" draggable="false" />
+      <div class="sel" id="sel"></div>
+    </div>
   </figure>
 
   <p class="sub" style="max-width:960px">
@@ -442,11 +501,126 @@ DEBUG_HTML = """<!DOCTYPE html>
 
   <script>
     const $ = (id) => document.getElementById(id);
+    let selection = null; // {x,y,width,height} in natural image pixels
+    let drag = null;
 
     function bust(img) {
       const base = img.getAttribute("src").split("?")[0];
       img.src = base + "?t=" + Date.now();
     }
+
+    function setGlyphMsg(text, kind) {
+      const el = $("glyph-msg");
+      el.textContent = text || "";
+      el.className = "glyph-msg" + (kind ? " " + kind : "");
+    }
+
+    function clearSelection() {
+      selection = null;
+      $("sel").style.display = "none";
+      setGlyphMsg("Selection cleared — Save glyph writes the full ROI strip.");
+    }
+
+    function clientToNatural(ev) {
+      const img = $("crop");
+      const rect = img.getBoundingClientRect();
+      const sx = img.naturalWidth / rect.width;
+      const sy = img.naturalHeight / rect.height;
+      const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left)) * sx;
+      const y = Math.max(0, Math.min(rect.height, ev.clientY - rect.top)) * sy;
+      return { x: x, y: y };
+    }
+
+    function paintSelection() {
+      const img = $("crop");
+      const box = $("sel");
+      if (!selection || !img.naturalWidth) {
+        box.style.display = "none";
+        return;
+      }
+      const rect = img.getBoundingClientRect();
+      const sx = rect.width / img.naturalWidth;
+      const sy = rect.height / img.naturalHeight;
+      box.style.display = "block";
+      box.style.left = (selection.x * sx) + "px";
+      box.style.top = (selection.y * sy) + "px";
+      box.style.width = (selection.width * sx) + "px";
+      box.style.height = (selection.height * sy) + "px";
+    }
+
+    function onPointerDown(ev) {
+      if (!$("crop").naturalWidth) return;
+      ev.preventDefault();
+      const p = clientToNatural(ev);
+      drag = { x0: p.x, y0: p.y };
+      selection = { x: Math.floor(p.x), y: Math.floor(p.y), width: 1, height: 1 };
+      paintSelection();
+    }
+    function onPointerMove(ev) {
+      if (!drag) return;
+      ev.preventDefault();
+      const p = clientToNatural(ev);
+      const x0 = Math.min(drag.x0, p.x);
+      const y0 = Math.min(drag.y0, p.y);
+      const x1 = Math.max(drag.x0, p.x);
+      const y1 = Math.max(drag.y0, p.y);
+      selection = {
+        x: Math.floor(x0),
+        y: Math.floor(y0),
+        width: Math.max(1, Math.ceil(x1 - x0)),
+        height: Math.max(1, Math.ceil(y1 - y0)),
+      };
+      paintSelection();
+    }
+    function onPointerUp(ev) {
+      if (!drag) return;
+      onPointerMove(ev);
+      drag = null;
+      if (selection) {
+        setGlyphMsg(
+          "Selection " + selection.width + "×" + selection.height +
+          " @(" + selection.x + "," + selection.y + ") — pick a symbol and Save glyph."
+        );
+      }
+    }
+
+    const wrap = $("crop-wrap");
+    wrap.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    $("btn-clear-sel").addEventListener("click", clearSelection);
+
+    $("btn-save-glyph").addEventListener("click", async () => {
+      const symbol = $("glyph-symbol").value;
+      const body = {};
+      if (symbol) body.symbol = symbol;
+      if (selection) {
+        body.x = selection.x;
+        body.y = selection.y;
+        body.width = selection.width;
+        body.height = selection.height;
+      }
+      setGlyphMsg("Saving…");
+      try {
+        const r = await fetch("/api/debug/glyphs/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const detail = d.detail || ("HTTP " + r.status);
+          setGlyphMsg(typeof detail === "string" ? detail : JSON.stringify(detail), "err");
+          return;
+        }
+        setGlyphMsg(
+          "Saved " + d.filename + " (" + d.width + "×" + d.height + ") → " + d.path,
+          "ok"
+        );
+      } catch (e) {
+        setGlyphMsg(String(e), "err");
+      }
+    });
 
     async function refreshMeta() {
       try {
@@ -485,13 +659,18 @@ DEBUG_HTML = """<!DOCTYPE html>
         } else {
           $("roi").textContent = "(missing)";
         }
+        if (d.glyphs_dir) $("glyphs-dir").textContent = d.glyphs_dir;
       } catch (e) { /* ignore */ }
     }
 
     function refreshImages() {
+      // Skip bust while dragging so selection coords stay aligned.
+      if (drag) return;
       bust($("overlay"));
       bust($("crop"));
     }
+
+    $("crop").addEventListener("load", paintSelection);
 
     refreshMeta();
     setInterval(refreshMeta, 2000);

@@ -148,8 +148,9 @@ Capture + session metrics, plus:
 | --- | --- | --- |
 | `GET` | `/api/laps/current` | Live displayed / last recorded lap |
 | `GET` | `/api/laps` | Recent lap rows (optional `session_id`) |
-| `GET` | `/debug` | ROI calibration page (overlay + crop + download + `last_error`) |
+| `GET` | `/debug` | ROI calibration page (overlay + crop + download + Save glyph + `last_error`) |
 | `GET` | `/api/debug/rois.jpg` | Full-res JPEG download (all ROI overlays; attachment) |
+| `POST` | `/api/debug/glyphs/save` | Save lap_time ROI (optional subcrop) as digit/colon/period PNG |
 | `GET` | `/api/debug/frame.jpg` | Full latest frame JPEG |
 | `GET` | `/api/debug/roi/lap_time.jpg` | `rois.lap_time` crop JPEG |
 | `GET` | `/api/debug/overlay/lap_time.jpg` | Frame with ROI rectangle |
@@ -178,7 +179,7 @@ See [`docs/README.md`](docs/README.md).
 
 ## Limitations
 
-- Lap readers: prove with **mock**, calibrate ROI, try **tesseract**; use **template** only if OCR fails on AC’s block font (see [`docs/ROI.md`](docs/ROI.md)).
+- Lap readers: prove with **mock**, calibrate ROI, try **tesseract**; use **template** only if OCR fails on AC’s block font. Bundled `ac_*` digit PNGs may be ACC — capture real AC glyphs via `/debug` → **Save glyph** (see [`docs/ROI.md`](docs/ROI.md)).
 - Tesseract on Pi 2B is best-effort; keep ROI tiny or stay on mock while validating capture.
 - HDCP / splitter quirks can black-screen the capture path.
 - Trusted home LAN assumed (no auth).

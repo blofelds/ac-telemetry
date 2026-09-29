@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from ac_telemetry import metrics
 from ac_telemetry.capture import CaptureService
 from ac_telemetry import debug_frames
+from ac_telemetry import glyph_save
 from ac_telemetry.detect import DetectService
 from ac_telemetry.settings import Settings
 from ac_telemetry.store import LapStore, SessionConflict, SessionNotFound, SessionStore
@@ -21,6 +22,22 @@ class SessionCreate(BaseModel):
     track: str = Field(default="", max_length=120)
     car: str = Field(default="", max_length=120)
     notes: str = Field(default="", max_length=2000)
+
+
+class GlyphSaveRequest(BaseModel):
+    """Save the current lap_time ROI (or a sub-rect) as a template PNG."""
+
+    symbol: str | None = Field(
+        default=None,
+        max_length=16,
+        description="0-9, ':'/colon, '.'/period; omit to write pending/<timestamp>.png",
+    )
+    roi_name: str = Field(default="lap_time", max_length=64)
+    # Optional sub-rectangle in ROI-local pixels (from /debug drag selection).
+    x: int | None = Field(default=None, ge=0)
+    y: int | None = Field(default=None, ge=0)
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
 
 
 def create_app(
@@ -101,6 +118,7 @@ def create_app(
             "detect_last_error": lap.get("last_error"),
             "lap": lap,
             "session_id": (store.current_session() or {}).get("session_id"),
+            "glyphs_dir": str(settings.glyphs_dir),
         }
 
     @app.get("/api/debug/frame.jpg")
@@ -172,6 +190,42 @@ def create_app(
             missing="No frame yet (is capture running? mock has no pixels)",
             filename="ac-telemetry-rois.jpg",
         )
+
+    @app.post("/api/debug/glyphs/save")
+    def api_debug_glyphs_save(body: GlyphSaveRequest) -> dict[str, Any]:
+        """Write the current ROI crop (optional sub-rect) as a template PNG.
+
+        Used from ``/debug`` to cut real Assetto Corsa digit/colon/period
+        glyphs after the bundled set was found to be ACC (wrong game).
+        """
+        roi = settings.rois.get(body.roi_name)
+        if roi is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"ROI {body.roi_name!r} not configured in settings.rois",
+            )
+        try:
+            frame = capture.get_latest_frame_copy()
+            result = glyph_save.save_glyph_png(
+                frame,
+                roi,
+                settings.glyphs_dir,
+                symbol=body.symbol,
+                sub_x=body.x,
+                sub_y=body.y,
+                sub_width=body.width,
+                sub_height=body.height,
+            )
+        except ValueError as exc:
+            # No frame / empty crop / bad symbol / bad sub-rect.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {
+            "ok": True,
+            "glyphs_dir": str(settings.glyphs_dir),
+            **result,
+        }
 
     @app.get("/health")
     def health() -> dict:

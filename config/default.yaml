@@ -43,6 +43,11 @@ port: 8741
 # Where session + lap CSV files are written
 data_dir: data/sessions
 
+# Where /debug "Save glyph" writes PNG crops from the live lap_time ROI.
+# Point detect.lap_time.templates_dir here once 0-9/colon/period are labeled.
+# Keeps bundled templates/lap_time_digits/ac_720p untouched (those may be ACC).
+glyphs_dir: templates/lap_time_digits/ac_720p_capture
+
 # Named HUD ROIs. Missing keys = that signal is disabled.
 # Coordinates are for 1280x720; recalibrate on your capture (see /debug).
 # See docs/ROI.md for HUD key mapping from acc-telemetry.

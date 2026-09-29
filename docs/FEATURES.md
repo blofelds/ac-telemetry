@@ -38,7 +38,7 @@ Honest inventory of what ships now versus what is planned.
 
 - Lap strip (displayed / last recorded / lap # / reader).
 - Session start/end + history + capture status.
-- **ROI debug** at `/debug` — overlay + crop JPEGs from the capture handoff; **Download full-res ROI screenshot** (`/api/debug/rois.jpg`) for measuring pixels locally; shows `last_error`.
+- **ROI debug** at `/debug` — overlay + crop JPEGs from the capture handoff; **Download full-res ROI screenshot** (`/api/debug/rois.jpg`) for measuring pixels locally; **Save glyph** (`POST /api/debug/glyphs/save`) to cut real AC digit/colon/period PNGs from the live ROI; shows `last_error`.
 
 ### Ops sketch
 
