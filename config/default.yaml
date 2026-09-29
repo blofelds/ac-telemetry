@@ -48,13 +48,13 @@ data_dir: data/sessions
 # See docs/ROI.md for HUD key mapping from acc-telemetry.
 rois:
   # Completed lap time HUD ("last lap"), not the running timer.
-  # Mapped from acc-telemetry assetto_corsa_1080p.last_lap_time (1080p→720p ×2/3).
+  # Calibrated from live PS5/Pi 2B 720p capture (HDMI + /debug ROI screenshot).
   # Used when detect.lap_time.mode is last_lap.
   lap_time:
-    x: 64
-    y: 284
-    width: 73
-    height: 14
+    x: 92
+    y: 287
+    width: 84
+    height: 16
 
 # Detection runs on a separate thread at a much lower FPS than capture.
 detect:
