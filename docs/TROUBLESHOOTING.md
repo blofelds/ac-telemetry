@@ -89,7 +89,7 @@ Empty displayed/recorded time usually means one of:
 
 | Cause | Check |
 | --- | --- |
-| OCR / template miss | Digits present but unreadable → tune ROI; try `reader: template` if Tesseract fails on AC block font. If `last_error` is `no lap-time pattern in template symbols`, bundled `ac_*` PNGs may be **ACC (wrong game)** — capture real AC glyphs with **/debug → Save glyph** (see [`ROI.md`](ROI.md)). |
+| OCR / template miss | Digits present but unreadable → tune ROI; try `reader: template` if Tesseract fails on AC block font. If `last_error` is `no lap-time pattern in template symbols`, bundled `ac_*` PNGs are **ACC (wrong game; confirmed on Pi)** — capture real AC glyphs with **/debug → Save glyph** (see [`ROI.md`](ROI.md)). |
 | Wrong ROI | Scaled coords miss your capture crop |
 | No session | Open a session before expecting CSV rows |
 | Reader error | Missing tesseract/OpenCV/templates |
@@ -101,7 +101,7 @@ Empty displayed/recorded time usually means one of:
 - Is a **session** open? Laps are not written without one (displayed OCR can still update).
 - Mock reader: wait for `mock_interval_seconds` (45s) or lower it for tests (`--backend mock` if not using V4L2).
 - For tesseract: confirm the green box covers the **last-lap** digits; see [`ROI.md`](ROI.md).
-- For template backup: set `detect.lap_time.reader: template` and point `templates_dir` at capture-built PNGs (needs apt OpenCV).
+- For template backup: set `detect.lap_time.reader: template` and point `templates_dir` at **capture-built** (real AC) PNGs via Save glyph (needs apt OpenCV). Bundled `ac_720p` / `ac_1080p` are ACC (mislabeled) — expect `no lap-time pattern in template symbols` on AC until replaced; see [`templates/lap_time_digits/README.md`](../templates/lap_time_digits/README.md).
 - Also: `lap.last_error` on `/api/laps/current` or `/api/debug/info`.
 - Watch `ac_telemetry_detect_failures_total` and `ac_telemetry_detect_drops_total` on `/metrics`.
 - If drops climb, lower `detect.fps` or keep using `mock` until the Pi has headroom.
