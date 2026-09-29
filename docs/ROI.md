@@ -27,16 +27,17 @@ trusting any reader.
 | --- | --- |
 | `mock` | Laptop / plumbing tests; no pixels needed |
 | `tesseract` | Default OCR path once `rois.lap_time` is calibrated |
-| `template` (alias `assetto_corsa`) | **Backup** when Tesseract misreads AC’s block font. Uses OpenCV `matchTemplate` on digit PNGs under `templates/lap_time_digits/`. **Bundled `ac_*` may be ACC (wrong game)** — capture real AC glyphs with **/debug → Save glyph** into `glyphs_dir` (`ac_720p_capture` by default), then point `templates_dir` there. PNG templates do **not** help Tesseract. |
+| `template` (alias `assetto_corsa`) | **Backup** when Tesseract misreads AC’s block font. Uses OpenCV `matchTemplate` on digit PNGs under `templates/lap_time_digits/`. **Bundled `ac_*` are ACC (wrong game; confirmed on Pi)** — capture real AC glyphs with **/debug → Save glyph** into `glyphs_dir` (`ac_720p_capture` by default), then point `templates_dir` there. PNG templates do **not** help Tesseract. |
 
 Keep `reader: tesseract` (or `mock`) until OCR is ruled out. Switch only the
 YAML `detect.lap_time.reader` value — mock and tesseract stay available.
 
 ### Capture real AC digit templates
 
-Bundled `ac_720p` / `ac_1080p` were copied from acc-telemetry speed digits and
-may not match PS5 Assetto Corsa. To cut real glyphs from your calibrated ROI
-(`92,287,84×16` or whatever you measured):
+Bundled `ac_720p` / `ac_1080p` were copied from acc-telemetry speed digits;
+live Pi testing against Assetto Corsa shows they are ACC glyphs, not AC.
+To cut real glyphs from your calibrated ROI (`92,287,84×16` or whatever you
+measured):
 
 1. Open `http://<pi-ip>:8741/debug` with live capture.
 2. Optionally drag a single digit on the ROI crop.
