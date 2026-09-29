@@ -6,6 +6,7 @@ work never holds the capture lock. No ffmpeg — OpenCV ``imencode`` only.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from ac_telemetry.detect.roi import crop_roi
@@ -13,6 +14,15 @@ from ac_telemetry.settings import RoiRect
 
 # Modest quality keeps CPU-friendly payloads small on Pi 2B.
 _JPEG_QUALITY = 70
+
+# Distinct BGR colors so multiple ROI boxes stay readable on one frame.
+_ROI_COLORS: tuple[tuple[int, int, int], ...] = (
+    (0, 255, 0),  # green
+    (0, 200, 255),  # amber
+    (255, 180, 0),  # sky
+    (255, 80, 255),  # magenta
+    (80, 255, 255),  # yellow
+)
 
 
 def _require_cv2():
@@ -57,37 +67,74 @@ def encode_roi_jpeg(frame: Any, roi: RoiRect) -> bytes | None:
     return encode_jpeg(crop)
 
 
+def _draw_roi(
+    snap: Any,
+    name: str,
+    roi: RoiRect,
+    *,
+    color: tuple[int, int, int],
+    thickness: int,
+) -> None:
+    """Draw one labeled ROI rectangle onto ``snap`` (mutates in place)."""
+    cv2 = _require_cv2()
+    x1 = int(roi.x)
+    y1 = int(roi.y)
+    x2 = int(roi.x + roi.width)
+    y2 = int(roi.y + roi.height)
+    cv2.rectangle(snap, (x1, y1), (x2, y2), color, thickness)
+    label = f"{name} {roi.width}x{roi.height}@({roi.x},{roi.y})"
+    cv2.putText(
+        snap,
+        label,
+        (max(0, x1), max(16, y1 - 6)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        color,
+        1,
+        cv2.LINE_AA,
+    )
+
+
 def encode_overlay_jpeg(
     frame: Any,
     roi: RoiRect | None,
     *,
+    name: str = "lap_time",
     color: tuple[int, int, int] = (0, 255, 0),
     thickness: int = 2,
 ) -> bytes | None:
-    """Full-frame JPEG with the ROI rectangle drawn (BGR green by default)."""
+    """Full-frame JPEG with one ROI rectangle drawn (BGR green by default)."""
     if frame is None:
         return None
-    cv2 = _require_cv2()
     # Draw on a copy so callers can reuse the snapshot for other crops.
     try:
         snap = frame.copy()
     except AttributeError:
         return None
     if roi is not None:
-        x1 = int(roi.x)
-        y1 = int(roi.y)
-        x2 = int(roi.x + roi.width)
-        y2 = int(roi.y + roi.height)
-        cv2.rectangle(snap, (x1, y1), (x2, y2), color, thickness)
-        label = f"lap_time {roi.width}x{roi.height}@({roi.x},{roi.y})"
-        cv2.putText(
-            snap,
-            label,
-            (max(0, x1), max(16, y1 - 6)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            color,
-            1,
-            cv2.LINE_AA,
-        )
+        _draw_roi(snap, name, roi, color=color, thickness=thickness)
+    return encode_jpeg(snap)
+
+
+def encode_rois_overlay_jpeg(
+    frame: Any,
+    rois: Mapping[str, RoiRect],
+    *,
+    thickness: int = 2,
+) -> bytes | None:
+    """Full-frame JPEG with every configured ROI drawn (capture resolution).
+
+    Used for the downloadable calibration screenshot — same pixel size as the
+    latest capture handoff, not a CSS-scaled preview.
+    """
+    if frame is None:
+        return None
+    try:
+        snap = frame.copy()
+    except AttributeError:
+        return None
+    # Stable order so colors stay consistent across refreshes.
+    for i, name in enumerate(sorted(rois)):
+        color = _ROI_COLORS[i % len(_ROI_COLORS)]
+        _draw_roi(snap, name, rois[name], color=color, thickness=thickness)
     return encode_jpeg(snap)

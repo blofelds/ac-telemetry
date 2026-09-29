@@ -23,6 +23,7 @@ def _client(tmp_path: Path) -> tuple[TestClient, CaptureService]:
     settings.detect.enabled = False
     settings.rois = {
         "lap_time": RoiRect(x=10, y=20, width=40, height=12),
+        "sector": RoiRect(x=60, y=20, width=30, height=12),
     }
     store = SessionStore(settings.data_dir)
     store.ensure()
@@ -36,6 +37,7 @@ def test_debug_endpoints_without_frame_return_503(tmp_path: Path) -> None:
     assert client.get("/api/debug/frame.jpg").status_code == 503
     assert client.get("/api/debug/roi/lap_time.jpg").status_code == 503
     assert client.get("/api/debug/overlay/lap_time.jpg").status_code == 503
+    assert client.get("/api/debug/rois.jpg").status_code == 503
     assert client.get("/api/debug/roi/missing.jpg").status_code == 404
 
 
@@ -48,6 +50,8 @@ def test_debug_info_and_page(tmp_path: Path) -> None:
     assert page.status_code == 200
     assert "ROI debug" in page.text
     assert "last_error" in page.text
+    assert "/api/debug/rois.jpg" in page.text
+    assert "Download full-res ROI screenshot" in page.text
 
 
 def test_jpeg_from_injected_frame(tmp_path: Path) -> None:
@@ -73,5 +77,33 @@ def test_jpeg_from_injected_frame(tmp_path: Path) -> None:
     assert overlay.status_code == 200
     assert overlay.content[:2] == b"\xff\xd8"
 
+    download = client.get("/api/debug/rois.jpg")
+    assert download.status_code == 200
+    assert download.content[:2] == b"\xff\xd8"
+    assert download.headers["content-type"] == "image/jpeg"
+    disp = download.headers.get("content-disposition", "")
+    assert "attachment" in disp
+    assert "ac-telemetry-rois.jpg" in disp
+    # Multi-ROI overlay should decode to the same capture resolution.
+    arr = np.frombuffer(download.content, dtype=np.uint8)
+    decoded = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    assert decoded is not None
+    assert decoded.shape[0] == 72 and decoded.shape[1] == 128
+
     info = client.get("/api/debug/info").json()
     assert info["frame"]["available"] is True
+
+
+def test_encode_rois_overlay_draws_all_keys() -> None:
+    from ac_telemetry import debug_frames
+
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    rois = {
+        "lap_time": RoiRect(x=2, y=4, width=20, height=8),
+        "sector": RoiRect(x=30, y=4, width=16, height=8),
+    }
+    payload = debug_frames.encode_rois_overlay_jpeg(frame, rois)
+    assert payload is not None and payload[:2] == b"\xff\xd8"
+    # Empty rois still produces a full-frame JPEG.
+    empty = debug_frames.encode_rois_overlay_jpeg(frame, {})
+    assert empty is not None and empty[:2] == b"\xff\xd8"

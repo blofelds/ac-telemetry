@@ -95,7 +95,8 @@ Empty displayed/recorded time usually means one of:
 | Reader error | Missing tesseract/OpenCV import |
 
 - Open **`http://<pi-ip>:8741/debug`** — overlay + ROI crop + `last_error`.
-- Raw JPEGs: `/api/debug/frame.jpg`, `/api/debug/roi/lap_time.jpg`.
+- **Download full-res ROI screenshot** (or `/api/debug/rois.jpg`) for a capture-resolution JPEG with all ROI boxes — use that file to measure pixels; the on-page preview is scaled.
+- Inline JPEGs: `/api/debug/frame.jpg`, `/api/debug/roi/lap_time.jpg`.
 - Is a **session** open? Laps are not written without one (displayed OCR can still update).
 - Mock reader: wait for `mock_interval_seconds` (45s) or lower it for tests (`--backend mock` if not using V4L2).
 - For tesseract: confirm the green box covers the **last-lap** digits; see [`ROI.md`](ROI.md).
