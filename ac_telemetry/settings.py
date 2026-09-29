@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8741
     data_dir: Path = Path("data/sessions")
+    # Where /debug "Save glyph" writes PNG templates cut from the live ROI.
+    # Keep separate from bundled ac_720p so ACC placeholders are not overwritten.
+    glyphs_dir: Path = Path("templates/lap_time_digits/ac_720p_capture")
 
     # Filled from YAML profiles after load
     profiles: dict[str, CaptureProfile] = Field(default_factory=dict)
@@ -211,6 +214,16 @@ def load_settings(config_path: Path | None = None) -> Settings:
             env_settings.data_dir
             if "AC_TELEMETRY_DATA_DIR" in os.environ
             else Path(data.get("data_dir", "data/sessions"))
+        ),
+        glyphs_dir=(
+            env_settings.glyphs_dir
+            if "AC_TELEMETRY_GLYPHS_DIR" in os.environ
+            else Path(
+                data.get(
+                    "glyphs_dir",
+                    "templates/lap_time_digits/ac_720p_capture",
+                )
+            )
         ),
         profiles=profiles,
         rois=rois,

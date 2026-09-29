@@ -89,22 +89,21 @@ Empty displayed/recorded time usually means one of:
 
 | Cause | Check |
 | --- | --- |
-| OCR / template miss | Digits present but unreadable → tune ROI; try `reader: template` if Tesseract fails on AC block font |
+| OCR / template miss | Digits present but unreadable → tune ROI; try `reader: template` if Tesseract fails on AC block font. If `last_error` is `no lap-time pattern in template symbols`, bundled `ac_*` PNGs may be **ACC (wrong game)** — capture real AC glyphs with **/debug → Save glyph** (see [`ROI.md`](ROI.md)). |
 | Wrong ROI | Scaled coords miss your capture crop |
 | No session | Open a session before expecting CSV rows |
 | Reader error | Missing tesseract/OpenCV/templates |
 
 - Open **`http://<pi-ip>:8741/debug`** — overlay + ROI crop + `last_error`.
 - **Download full-res ROI screenshot** (or `/api/debug/rois.jpg`) for a capture-resolution JPEG with all ROI boxes — use that file to measure pixels; the on-page preview is scaled.
+- **Save glyph** on `/debug` (or `POST /api/debug/glyphs/save`) writes PNG crops into `glyphs_dir` for real AC digit templates.
 - Inline JPEGs: `/api/debug/frame.jpg`, `/api/debug/roi/lap_time.jpg`.
 - Is a **session** open? Laps are not written without one (displayed OCR can still update).
 - Mock reader: wait for `mock_interval_seconds` (45s) or lower it for tests (`--backend mock` if not using V4L2).
 - For tesseract: confirm the green box covers the **last-lap** digits; see [`ROI.md`](ROI.md).
-- For template backup: set `detect.lap_time.reader: template` (needs apt OpenCV + `templates/lap_time_digits/`).
+- For template backup: set `detect.lap_time.reader: template` and point `templates_dir` at capture-built PNGs (needs apt OpenCV).
 - Also: `lap.last_error` on `/api/laps/current` or `/api/debug/info`.
 - Watch `ac_telemetry_detect_failures_total` and `ac_telemetry_detect_drops_total` on `/metrics`.
 - If drops climb, lower `detect.fps` or keep using `mock` until the Pi has headroom.
-
-## Still stuck
 
 - Collect: `GET /health` JSON, `GET /api/laps/current`, last 50 log lines, `v4l2-ctl --list-devices` output (if hardware), and whether mock works on the same host.

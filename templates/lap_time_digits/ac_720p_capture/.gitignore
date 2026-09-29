@@ -1,0 +1,5 @@
+# Local captures — do not commit unlabeled dumps by accident
+*.png
+pending/
+!.gitkeep
+!README.md

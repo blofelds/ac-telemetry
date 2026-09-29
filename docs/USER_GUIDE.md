@@ -61,7 +61,7 @@ ac-telemetry
 
 1. Open `http://<pi-ip>:8741/debug` and confirm the green box covers the **last-lap** digits (see [`ROI.md`](ROI.md)). Use **Download full-res ROI screenshot** to save a capture-resolution JPEG for measuring pixels (the page preview is scaled).
 2. Adjust `rois.lap_time` in `config/default.yaml` if the scaled ROI is wrong, then restart.
-3. Keep `reader: mock` until capture is stable; then try `tesseract`. If OCR fails on AC’s block font, switch to `template` (digit PNGs — see [`ROI.md`](ROI.md)).
+3. Keep `reader: mock` until capture is stable; then try `tesseract`. If OCR fails on AC’s block font, switch to `template` — but **bundled `ac_*` PNGs may be ACC (wrong game)**. Use **/debug → Save glyph** to cut real AC digits into `glyphs_dir` (`templates/lap_time_digits/ac_720p_capture` by default), then point `templates_dir` there (see [`ROI.md`](ROI.md)).
 4. Start a session from the phone UI before you drive.
 
 ### systemd
@@ -78,11 +78,13 @@ See [`../deploy/ac-telemetry.service`](../deploy/ac-telemetry.service). Pi user 
 | Modes | `last_lap` (record when last-lap text changes) or `current_timer` (record on reset) |
 | CSV | `data/sessions/laps.csv` |
 | Live | UI lap strip + `GET /api/laps/current` |
-| Calibrate | `/debug` (download full-res) · `/api/debug/rois.jpg` · `/api/debug/frame.jpg` |
+| Calibrate | `/debug` (download full-res + **Save glyph**) · `/api/debug/rois.jpg` · `POST /api/debug/glyphs/save` · `/api/debug/frame.jpg` |
 
 **Reader choice:** prove the path with `mock`, calibrate ROI, try `tesseract`.
-Use `template` only as a backup when OCR misreads the AC block font (templates
-live under `templates/lap_time_digits/`; they do not help Tesseract).
+Use `template` only as a backup when OCR misreads the AC block font. Bundled
+templates under `templates/lap_time_digits/ac_*` may be ACC — capture real AC
+glyphs with **/debug → Save glyph** (see [`ROI.md`](ROI.md)). PNGs do not help
+Tesseract.
 
 Laps are written only while a session is open. If the UI shows `—`, check
 `last_error` on `/debug` (OCR/template miss, wrong ROI, no session, or reader error).
