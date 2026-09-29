@@ -44,8 +44,8 @@ port: 8741
 data_dir: data/sessions
 
 # Where /debug "Save glyph" writes PNG crops from the live lap_time ROI.
-# Point detect.lap_time.templates_dir here once 0-9/colon/period are labeled.
-# Keeps bundled templates/lap_time_digits/ac_720p untouched (those may be ACC).
+# Same folder as detect.lap_time.templates_dir below — fill 0-9/colon/period
+# here before template matching works. Bundled ac_720p may be ACC (wrong game).
 glyphs_dir: templates/lap_time_digits/ac_720p_capture
 
 # Named HUD ROIs. Missing keys = that signal is disabled.
@@ -59,7 +59,7 @@ rois:
     x: 92
     y: 287
     width: 84
-    height: 16
+    height: 17
 
 # Detection runs on a separate thread at a much lower FPS than capture.
 detect:
@@ -68,18 +68,17 @@ detect:
   debounce_reads: 2
   drop_under_pressure: true
   lap_time:
-    # Readers (pick one; template is a backup, not required):
+    # Readers (pick one):
     #   mock      — synthetic laps (no pixels / OCR); good for laptop + plumbing tests
-    #   tesseract — OCR (default). Calibrate ROI first; may fail on AC block font
+    #   tesseract — OCR; may fail on AC block font
     #   template  — OpenCV matchTemplate on digit PNGs (alias: assetto_corsa).
-    #               Use when Tesseract misreads AC's block font. Templates come from
-    #               acc-telemetry AC 1080p speed digits; ac_720p is scaled ×2/3 for
-    #               pi2b 720p capture (see templates/lap_time_digits/README.md).
-    reader: tesseract
+    #               Default for Pi 720p once Save glyph has filled templates_dir.
+    reader: template
     mode: last_lap
     mock_interval_seconds: 45
     min_lap_ms: 30000
     reset_slack_ms: 5000
-    # Only used when reader is template / assetto_corsa:
-    templates_dir: templates/lap_time_digits/ac_720p
+    # Same path as glyphs_dir — Save glyph writes here; empty until capture on Pi.
+    # Bundled templates/lap_time_digits/ac_720p is ACC (mislabeled); do not use it.
+    templates_dir: templates/lap_time_digits/ac_720p_capture
     match_threshold: 0.50
