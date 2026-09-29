@@ -89,7 +89,7 @@ class DetectService:
         if "lap_time" not in self.settings.rois and detect.lap_time.reader != "mock":
             logger.warning(
                 "detect.enabled but rois.lap_time missing; "
-                "tesseract reads will fail until ROI is configured"
+                "tesseract/template reads will fail until ROI is configured"
             )
         with self._lock:
             if self._thread and self._thread.is_alive():
@@ -98,6 +98,8 @@ class DetectService:
             self._reader = build_lap_time_reader(
                 detect.lap_time.reader,
                 mock_interval_seconds=detect.lap_time.mock_interval_seconds,
+                templates_dir=detect.lap_time.templates_dir,
+                match_threshold=detect.lap_time.match_threshold,
             )
             self._thread = threading.Thread(
                 target=self._run, name="detect-loop", daemon=True
