@@ -17,7 +17,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BackendName = Literal["mock", "v4l2"]
 ProfileName = Literal["pi2b", "pi5"]
-LapTimeReaderName = Literal["mock", "tesseract"]
+LapTimeReaderName = Literal["mock", "tesseract", "template", "assetto_corsa"]
 LapTimeMode = Literal["last_lap", "current_timer"]
 
 
@@ -62,6 +62,9 @@ class LapTimeDetectSettings(BaseModel):
     # current_timer: ignore short segments when detecting a reset.
     min_lap_ms: int = 30_000
     reset_slack_ms: int = 5_000
+    # template / assetto_corsa only — digit PNGs (see templates/lap_time_digits/).
+    templates_dir: str = "templates/lap_time_digits/ac_720p"
+    match_threshold: float = 0.50
 
 
 class DetectSettings(BaseModel):
@@ -138,6 +141,8 @@ def _parse_detect(raw: dict[str, Any]) -> DetectSettings:
             "mock_interval_seconds",
             "min_lap_ms",
             "reset_slack_ms",
+            "templates_dir",
+            "match_threshold",
         )
         if k in lap_body
     })

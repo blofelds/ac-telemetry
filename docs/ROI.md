@@ -13,13 +13,24 @@ regions exist in the sister project for later signals.
 | Source mapping | Scaled from [acc-telemetry](https://github.com/blofelds/acc-telemetry) profile `assetto_corsa_1080p` → `last_lap_time` |
 | Scale used | 1080p → pi2b 720p (×2/3) |
 
-With `mode: last_lap`, a new CSV row is written when the debounced OCR text
+With `mode: last_lap`, a new CSV row is written when the debounced reader text
 changes to a new non-zero time. That matches AC’s left-side **last lap**
 readout after you cross the line.
 
 Coordinates are resolution- and crop-dependent. HDMI capture often differs
 from a recorded 1080p YouTube/file crop — verify with the debug helper before
-trusting OCR.
+trusting any reader.
+
+### Which lap-time reader?
+
+| Reader | When to use |
+| --- | --- |
+| `mock` | Laptop / plumbing tests; no pixels needed |
+| `tesseract` | Default OCR path once `rois.lap_time` is calibrated |
+| `template` (alias `assetto_corsa`) | **Backup** when Tesseract misreads AC’s block font. Uses OpenCV `matchTemplate` on digit PNGs under `templates/lap_time_digits/` (from acc-telemetry AC 1080p speed digits; `ac_720p` is scaled ×2/3 for pi2b). PNG templates do **not** help Tesseract. |
+
+Keep `reader: tesseract` (or `mock`) until OCR is ruled out. Switch only the
+YAML `detect.lap_time.reader` value — mock and tesseract stay available.
 
 ### Calibrate on the Pi
 
@@ -41,10 +52,10 @@ encode runs outside the capture lock.
 
 | Cause | What to check |
 | --- | --- |
-| OCR miss | Crop looks right but digits unreadable → tune ROI / lighting; watch `lap.last_error` |
+| OCR / template miss | Crop looks right but digits unreadable → tune ROI / lighting; watch `lap.last_error`; try `reader: template` if Tesseract fails on AC block font |
 | Wrong ROI | Debug overlay misses the HUD → edit `rois.lap_time` |
 | No session | Displayed time may update, but laps are **not** persisted without an open session |
-| Reader error | Missing tesseract/OpenCV → `last_error` on `/debug` and `/api/laps/current` |
+| Reader error | Missing tesseract/OpenCV/templates → `last_error` on `/debug` and `/api/laps/current` |
 
 ## Known HUD keys (`assetto_corsa_1080p`)
 
