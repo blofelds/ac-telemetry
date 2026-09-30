@@ -11,7 +11,7 @@ those dirs.
 | --- | --- |
 | `ac_1080p/` | Upstream 24×28 PNGs (mislabeled; ACC face) |
 | `ac_720p/` | Same set scaled ×2/3 for pi2b 720p (still ACC) |
-| `ac_720p_capture/` | **Real AC** glyphs from PS5 HUD LAST/BEST — **partial** (has 0–6, 8, `:`, `.`; missing **7** and **9**) |
+| `ac_720p_capture/` | **Real AC** glyphs from PS5 HUD LAST/BEST — **complete** (0–9 + `:` / `.`) |
 
 `colon.png` / `period.png` in the bundled ACC dirs are synthetic separators (not in
 the upstream speed set). Separators under `ac_720p_capture/` are real HUD crops.
@@ -23,15 +23,15 @@ detect.lap_time.reader: template
 detect.lap_time.templates_dir: templates/lap_time_digits/ac_720p_capture
 ```
 
-Add `7.png` / `9.png` (via `/debug` → **Save glyph** or another crop) before
-expecting full coverage of all lap times.
+The set is complete: digits **0–9** plus colon and period (`7` from LAST
+`1:46.177`, `9` from BEST `1:19.329`).
 
 ### Capture more glyphs on the Pi
 
 1. Calibrate `rois.lap_time` so `/debug` shows only the last-lap digits.
-2. Open `http://<pi-ip>:8741/debug` while AC shows a known time that includes missing symbols.
+2. Open `http://<pi-ip>:8741/debug` while AC shows a known time.
 3. Optionally drag a single digit on the ROI crop preview.
-4. Pick symbol `7` or `9` (etc.) and tap **Save glyph**.
+4. Pick the symbol and tap **Save glyph**.
 5. Files land under `glyphs_dir` (default `templates/lap_time_digits/ac_720p_capture/`).
 
 API: `POST /api/debug/glyphs/save` with JSON `{ "symbol": "5" }` and optional
