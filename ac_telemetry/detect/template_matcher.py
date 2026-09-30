@@ -29,8 +29,6 @@ def segment_glyphs(roi_bgr: Any, *, min_rows: int = 3) -> list[Any]:
     ``min_rows`` is lower than the speed reader (6) so colon/period dots
     survive segmentation inside a lap-time crop.
     """
-    import numpy as np
-
     if roi_bgr is None or getattr(roi_bgr, "size", 0) == 0:
         return []
     mask = white_mask(roi_bgr)
@@ -43,8 +41,12 @@ def segment_glyphs(roi_bgr: Any, *, min_rows: int = 3) -> list[Any]:
 
 
 def _column_spans(mask: Any) -> list[tuple[int, int]]:
-    import numpy as np
+    """Ink runs left-to-right.
 
+    Width may be 1: AC ``:`` / ``.`` are often a single bright column after
+    ``white_mask``. Requiring ``>= 2`` dropped the colon on real 720p crops
+    and produced digit soup like ``183188`` instead of ``1:03.168``.
+    """
     counts = (mask > 0).sum(axis=0)
     spans: list[tuple[int, int]] = []
     start: int | None = None
@@ -52,10 +54,10 @@ def _column_spans(mask: Any) -> list[tuple[int, int]]:
         if count >= 2 and start is None:
             start = x
         elif count < 2 and start is not None:
-            if x - start >= 2:
+            if x - start >= 1:
                 spans.append((start, x))
             start = None
-    if start is not None and mask.shape[1] - start >= 2:
+    if start is not None and mask.shape[1] - start >= 1:
         spans.append((start, mask.shape[1]))
     return spans
 
@@ -68,6 +70,18 @@ def _trim_rows(glyph: Any, *, min_rows: int) -> Any | None:
         return None
     return glyph[rows[0] : rows[-1] + 1, :]
 
+
+def _trim_to_ink(mask: Any) -> Any | None:
+    """Crop a binary mask to its ink bounding box (rows and columns)."""
+    import numpy as np
+
+    if mask is None or getattr(mask, "size", 0) == 0:
+        return None
+    rows = np.where(mask.any(axis=1))[0]
+    cols = np.where(mask.any(axis=0))[0]
+    if len(rows) == 0 or len(cols) == 0:
+        return None
+    return mask[rows[0] : rows[-1] + 1, cols[0] : cols[-1] + 1]
 
 def pad_glyph(
     glyph: Any,
@@ -195,6 +209,14 @@ class DigitTemplateMatcher:
 
     @staticmethod
     def _load_templates(template_dir: Path) -> dict[str, Any]:
+        """Load digit PNGs and normalize to the same space as ROI probes.
+
+        Save-glyph / VLC crops are midtone RGB on a dark pad. Live matching
+        probes are ``white_mask`` binary blobs trimmed to ink. Comparing those
+        directly with ``matchTemplate`` mis-ranks lookalikes (0→8, 6→8) and
+        fails thin separators. Binarize + trim + pad onto one canvas so probes
+        and templates share geometry.
+        """
         import cv2
         import numpy as np
 
@@ -202,26 +224,44 @@ class DigitTemplateMatcher:
             raise FileNotFoundError(
                 f"Digit templates not found: {template_dir}"
             )
-        templates: dict[str, Any] = {}
+
+        raw: dict[str, Any] = {}
         for digit in "0123456789":
             path = template_dir / f"{digit}.png"
-            image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+            image = cv2.imread(str(path), cv2.IMREAD_COLOR)
             if image is None:
                 raise FileNotFoundError(
                     f"Missing digit template {path}. "
-                    "Need 0.png through 9.png (from acc-telemetry AC 1080p digits)."
+                    "Need 0.png through 9.png under templates_dir."
                 )
-            templates[digit] = image.astype(np.float32)
+            trimmed = _trim_to_ink(white_mask(image))
+            if trimmed is None:
+                raise ValueError(
+                    f"Digit template {path} has no ink after white_mask; "
+                    "re-crop a brighter glyph."
+                )
+            raw[digit] = trimmed
 
-        # Optional separators — synthetic or cropped from the same HUD font.
         for filename, label in (("colon.png", ":"), ("period.png", ".")):
             path = template_dir / filename
             if not path.is_file():
                 continue
-            image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-            if image is not None:
-                templates[label] = image.astype(np.float32)
-        return templates
+            image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+            if image is None:
+                continue
+            trimmed = _trim_to_ink(white_mask(image))
+            if trimmed is not None:
+                raw[label] = trimmed
+
+        # Common canvas from digit ink boxes (separators are tiny).
+        digit_shapes = [raw[d].shape for d in "0123456789"]
+        canvas_h = max(h for h, _w in digit_shapes)
+        canvas_w = max(w for _h, w in digit_shapes)
+        return {
+            label: pad_glyph(glyph, canvas_h, canvas_w).astype(np.float32)
+            for label, glyph in raw.items()
+        }
+
 
 
 def _normalize_time_symbols(raw: str) -> str | None:
