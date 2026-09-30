@@ -1,22 +1,27 @@
 # AC 720p capture templates (real Assetto Corsa)
 
-PNG digits / separators cut from the live Pi HDMI ROI via `/debug` →
-**Save glyph**. Empty until you capture on the Pi.
+Native-resolution PNGs cropped from a PS5 Assetto Corsa HUD LAST/BEST panel
+(VLC capture at ~1280×721). White time digits only — not the LAST/BEST labels.
 
-| File | Symbol |
-| --- | --- |
-| `0.png` … `9.png` | Digits |
-| `colon.png` | `:` |
-| `period.png` | `.` |
-| `pending/*.png` | Unlabeled full-ROI (or subcrop) dumps |
+| File | Symbol | Present |
+| --- | --- | --- |
+| `0.png` … `6.png`, `8.png` | Digits | Yes |
+| `7.png`, `9.png` | Digits | **Missing** — not in the source frame |
+| `colon.png` | `:` | Yes |
+| `period.png` | `.` | Yes |
 
-Bundled sibling dirs `ac_720p` / `ac_1080p` may be **ACC** glyphs (wrong game).
-Do not expect them to match PS5 Assetto Corsa until replaced. After you have
-a full labeled set here, set:
+`4.png` is the original crop (kept as extracted). Additional captures can still
+land under `pending/` via `/debug` → **Save glyph** (gitignored).
+
+Point config here when using the template reader:
 
 ```yaml
 detect.lap_time.reader: template
 detect.lap_time.templates_dir: templates/lap_time_digits/ac_720p_capture
 ```
+
+Expect match failures on times that need **7** or **9** until those glyphs are
+added. Bundled `ac_720p` / `ac_1080p` remain ACC (wrong game) — prefer this
+folder for real AC.
 
 See [`docs/ROI.md`](../../docs/ROI.md).
