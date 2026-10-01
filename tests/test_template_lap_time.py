@@ -11,10 +11,14 @@ from ac_telemetry.detect.readers import (
     build_lap_time_reader,
     resolve_templates_dir,
 )
+from ac_telemetry.detect.template_matcher import _column_spans
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "lap_time"
 TEMPLATES_720P = resolve_templates_dir("templates/lap_time_digits/ac_720p")
 TEMPLATES_1080P = resolve_templates_dir("templates/lap_time_digits/ac_1080p")
+TEMPLATES_CAPTURE = resolve_templates_dir(
+    "templates/lap_time_digits/ac_720p_capture"
+)
 
 
 def _cv2():
@@ -51,6 +55,37 @@ def test_template_reader_reads_synthetic_1080p_crop() -> None:
     reading = reader.read(image)
     assert reading.ok, reading.error
     assert reading.text == "1:44.321"
+
+
+def test_template_reader_reads_ac_720p_capture_vlc_crop() -> None:
+    """Real AC LAST crop (VLC 720p) against capture-derived midtone glyphs.
+
+    Regression for ``no glyphs matched in ROI`` / digit soup when grayscale
+    Save-glyph PNGs were matched against binary ``white_mask`` probes without
+    load-time normalize, and 1px colon spans were dropped.
+    """
+    cv2 = _cv2()
+    path = FIXTURES / "ac_720p_capture_1_03_168.png"
+    assert path.is_file(), path
+    image = cv2.imread(str(path))
+    assert image is not None
+    reader = TemplateLapTimeReader(TEMPLATES_CAPTURE)
+    reading = reader.read(image)
+    assert reading.ok, reading.error
+    assert reading.text == "1:03.168"
+    assert reading.lap_time_ms == 63_168
+
+
+def test_column_spans_keep_single_pixel_colon() -> None:
+    import numpy as np
+
+    # Two digits with a 1-column colon between them (count>=2 each col).
+    mask = np.zeros((12, 20), np.uint8)
+    mask[:, 1:4] = 255
+    mask[2:5, 7] = 255
+    mask[7:10, 7] = 255
+    mask[:, 10:18] = 255
+    assert _column_spans(mask) == [(1, 4), (7, 8), (10, 18)]
 
 
 def test_template_reader_empty_roi() -> None:
