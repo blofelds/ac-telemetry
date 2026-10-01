@@ -13,6 +13,8 @@ from ac_telemetry.capture import CaptureService
 from ac_telemetry import debug_frames
 from ac_telemetry import glyph_save
 from ac_telemetry.detect import DetectService
+from ac_telemetry.detect.readers import resolve_templates_dir
+from ac_telemetry.runtime_info import runtime_snapshot
 from ac_telemetry.settings import Settings
 from ac_telemetry.store import LapStore, SessionConflict, SessionNotFound, SessionStore
 from ac_telemetry.web import DEBUG_HTML, STATUS_HTML
@@ -98,6 +100,8 @@ def create_app(
         roi = settings.rois.get("lap_time")
         lap = _lap_payload() or {}
         stats = capture.stats.as_dict()
+        templates_dir = resolve_templates_dir(settings.detect.lap_time.templates_dir)
+        runtime = runtime_snapshot()
         return {
             "roi": None
             if roi is None
@@ -119,7 +123,74 @@ def create_app(
             "lap": lap,
             "session_id": (store.current_session() or {}).get("session_id"),
             "glyphs_dir": str(settings.glyphs_dir),
+            "templates_dir": str(templates_dir),
+            "match_threshold": settings.detect.lap_time.match_threshold,
+            "detect_debug_dump": settings.detect.debug_dump.model_dump(),
+            "git_sha": runtime.get("git_sha"),
+            "git_dirty": runtime.get("git_dirty"),
+            "opencv_version": runtime.get("opencv_version"),
+            "numpy_version": runtime.get("numpy_version"),
+            "app_version": runtime.get("app_version"),
+            "has_detect_dump": bool(
+                detect is not None and detect.last_dump_json() is not None
+            ),
         }
+
+    def _png_or_error(payload: bytes | None, *, missing: str) -> Response:
+        if payload is None:
+            raise HTTPException(status_code=503, detail=missing)
+        return Response(
+            content=payload,
+            media_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/debug/detect/last.json")
+    def api_debug_detect_last_json() -> dict[str, Any]:
+        """Last detect dump metadata (spans, scores, config, runtime)."""
+        if detect is None:
+            raise HTTPException(status_code=503, detail="Detect service not configured")
+        payload = detect.last_dump_json()
+        if payload is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No detect dump yet. Wait for a failed read "
+                    "(or enable detect.debug_dump.on_success), "
+                    "with detect.debug_dump.enabled true."
+                ),
+            )
+        return payload
+
+    @app.get("/api/debug/detect/last_roi.png")
+    def api_debug_detect_last_roi() -> Response:
+        """Lossless PNG of the exact BGR crop the detect thread used."""
+        if detect is None:
+            raise HTTPException(status_code=503, detail="Detect service not configured")
+        return _png_or_error(
+            detect.last_dump_roi_png(),
+            missing="No detect ROI dump yet (no failure stored, or empty crop)",
+        )
+
+    @app.get("/api/debug/detect/last_mask.png")
+    def api_debug_detect_last_mask() -> Response:
+        """white_mask PNG for the stored detect ROI crop."""
+        if detect is None:
+            raise HTTPException(status_code=503, detail="Detect service not configured")
+        return _png_or_error(
+            detect.last_dump_mask_png(),
+            missing="No detect mask dump yet",
+        )
+
+    @app.get("/api/debug/detect/last_annotated.png")
+    def api_debug_detect_last_annotated() -> Response:
+        """Optional annotated ROI (span boxes + chosen labels); encode on GET."""
+        if detect is None:
+            raise HTTPException(status_code=503, detail="Detect service not configured")
+        return _png_or_error(
+            detect.last_dump_annotated_png(),
+            missing="No detect ROI dump to annotate",
+        )
 
     @app.get("/api/debug/frame.jpg")
     def api_debug_frame() -> Response:

@@ -43,12 +43,14 @@ Candidates as work lands:
 | List laps via API | `GET /api/laps` · [FEATURES.md](FEATURES.md) |
 | Scrape Prometheus | `GET /metrics` · [FEATURES.md](FEATURES.md) |
 | Calibrate lap ROI | `http://<host>:8741/debug` · [ROI.md](ROI.md) |
+| Pull last detect dump (failure ROI/mask/scores) | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) · `/api/debug/detect/last.*` |
 | Understand detect thread | [ARCHITECTURE.md](ARCHITECTURE.md) |
 
 ## Changelog (docs)
 
 | Date | Change |
 | --- | --- |
+| 2026-10-01 | Detect dump endpoints: last.json / last_roi.png / last_mask.png checklist |
 | 2026-09-28 | ROI debug helper; `rois.lap_time` / last-lap docs; v4l2 default backend |
 | 2026-09-27 | Lap times: ROI, readers, CSV, metrics; Pi 2B apt OpenCV notes |
 | 2026-09-26 | Pi 2B install: plain uvicorn / no uvloop hang note |
