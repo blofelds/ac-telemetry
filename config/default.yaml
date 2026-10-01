@@ -44,8 +44,8 @@ port: 8741
 data_dir: data/sessions
 
 # Where /debug "Save glyph" writes PNG crops from the live lap_time ROI.
-# Same folder as detect.lap_time.templates_dir below. Live Pi set is incomplete
-# (1/3/5 from dump); add more via Save glyph. Bundled ac_720p is ACC (wrong game).
+# Same folder as detect.lap_time.templates_dir below. Live Pi set is complete
+# (0–9 + : / . from detect dumps). Bundled ac_720p is ACC (wrong game).
 glyphs_dir: templates/lap_time_digits/ac_720p_pi
 
 # Named HUD ROIs. Missing keys = that signal is disabled.
@@ -86,8 +86,9 @@ detect:
     mock_interval_seconds: 45
     min_lap_ms: 30000
     reset_slack_ms: 5000
-    # Same path as glyphs_dir — live Pi HDMI crops (incomplete; see set README).
+    # Same path as glyphs_dir — live Pi HDMI crops (full 0–9 + : / .; see set README).
     # Prefer over ac_720p_capture on soft MJPEG (lookalike 1↔7 / 3↔9 / 5↔6).
+    # Separators ship as PNGs; mask-path span recovery is still follow-on.
     # Bundled templates/lap_time_digits/ac_720p is ACC (mislabeled); do not use it.
     templates_dir: templates/lap_time_digits/ac_720p_pi
     match_threshold: 0.50
