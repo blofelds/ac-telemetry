@@ -61,7 +61,7 @@ ac-telemetry
 
 1. Open `http://<pi-ip>:8741/debug` and confirm the green box covers the **last-lap** digits (see [`ROI.md`](ROI.md)). Use **Download full-res ROI screenshot** to save a capture-resolution JPEG for measuring pixels (the page preview is scaled).
 2. Adjust `rois.lap_time` in `config/default.yaml` if the scaled ROI is wrong, then restart.
-3. Keep `reader: mock` until capture is stable; then try `tesseract`. If OCR fails on AC’s block font, switch to `template` — but **bundled `ac_*` PNGs may be ACC (wrong game)**. Use **/debug → Save glyph** to cut real AC digits into `glyphs_dir` (`templates/lap_time_digits/ac_720p_capture` by default), then point `templates_dir` there (see [`ROI.md`](ROI.md)).
+3. Keep `reader: mock` until capture is stable; then try `tesseract`. If OCR fails on AC’s block font, switch to `template` — but **bundled `ac_*` PNGs may be ACC (wrong game)**. Prefer live Pi set `templates/lap_time_digits/ac_720p_pi` (incomplete; fill via **/debug → Save glyph**); VLC `ac_720p_capture` is complete but can mis-rank lookalikes on soft MJPEG (see [`ROI.md`](ROI.md)).
 4. Start a session from the phone UI before you drive.
 
 ### systemd

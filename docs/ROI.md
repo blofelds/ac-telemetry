@@ -27,7 +27,7 @@ trusting any reader.
 | --- | --- |
 | `mock` | Laptop / plumbing tests; no pixels needed |
 | `tesseract` | Default OCR path once `rois.lap_time` is calibrated |
-| `template` (alias `assetto_corsa`) | **Backup** when Tesseract misreads AC’s block font. Uses OpenCV `matchTemplate` on digit PNGs under `templates/lap_time_digits/`. **Bundled `ac_*` are ACC (wrong game; confirmed on Pi)** — capture real AC glyphs with **/debug → Save glyph** into `glyphs_dir` (`ac_720p_capture` by default), then point `templates_dir` there. PNG templates do **not** help Tesseract. |
+| `template` (alias `assetto_corsa`) | **Backup** when Tesseract misreads AC’s block font. Uses OpenCV `matchTemplate` on digit PNGs under `templates/lap_time_digits/`. **Bundled `ac_*` are ACC (wrong game; confirmed on Pi)** — prefer **`ac_720p_pi`** (live HDMI detect crops; incomplete) over VLC `ac_720p_capture` on soft Pi MJPEG. Capture more with **/debug → Save glyph** into `glyphs_dir`. PNG templates do **not** help Tesseract. |
 
 Keep `reader: tesseract` (or `mock`) until OCR is ruled out. Switch only the
 YAML `detect.lap_time.reader` value — mock and tesseract stay available.
@@ -42,7 +42,7 @@ measured):
 1. Open `http://<pi-ip>:8741/debug` with live capture.
 2. Optionally drag a single digit on the ROI crop.
 3. Choose symbol `0`–`9`, `:`, or `.` → **Save glyph** (writes PNG under
-   `glyphs_dir`, default `templates/lap_time_digits/ac_720p_capture/`).
+   `glyphs_dir`, default `templates/lap_time_digits/ac_720p_pi/`).
 4. Empty symbol → `pending/<timestamp>.png` (full strip or selection).
 5. Set `detect.lap_time.templates_dir` to that folder and `reader: template`.
 
