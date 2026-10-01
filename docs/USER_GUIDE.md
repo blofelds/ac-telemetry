@@ -79,6 +79,7 @@ See [`../deploy/ac-telemetry.service`](../deploy/ac-telemetry.service). Pi user 
 | CSV | `data/sessions/laps.csv` |
 | Live | UI lap strip + `GET /api/laps/current` |
 | Calibrate | `/debug` (download full-res + **Save glyph**) · `/api/debug/rois.jpg` · `POST /api/debug/glyphs/save` · `/api/debug/frame.jpg` |
+| Detect dump | `/api/debug/detect/last.json` + `last_roi.png` + `last_mask.png` — exact failed crop (see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)) |
 
 **Reader choice:** prove the path with `mock`, calibrate ROI, try `tesseract`.
 Use `template` only as a backup when OCR misreads the AC block font. Bundled
@@ -88,6 +89,8 @@ Tesseract.
 
 Laps are written only while a session is open. If the UI shows `—`, check
 `last_error` on `/debug` (OCR/template miss, wrong ROI, no session, or reader error).
+If the error is `no glyphs matched in ROI`, pull the **detect dump** checklist in
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) before changing matcher settings.
 
 ## Sessions API
 

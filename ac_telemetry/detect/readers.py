@@ -25,6 +25,8 @@ class LapTimeReading:
     text: str = ""
     lap_time_ms: int | None = None
     error: str = ""
+    # Optional matcher dump payload (template reader). Not part of API status.
+    diagnostics: dict[str, Any] | None = None
 
 
 class LapTimeReader(Protocol):
@@ -226,20 +228,29 @@ class TemplateLapTimeReader:
             return LapTimeReading(ok=False, error="empty ROI (no frame)")
         assert self._matcher is not None
         try:
-            raw = self._matcher.read_symbols(roi_bgr)
+            raw, diag = self._matcher.read_symbols_with_diagnostics(roi_bgr)
         except Exception as exc:  # noqa: BLE001
             return LapTimeReading(ok=False, error=f"template match failed: {exc}")
+        # Mask ndarray stays in diag for DetectService to stash; strip from
+        # anything that might get JSON-serialized elsewhere.
         if not raw:
-            return LapTimeReading(ok=False, error="no glyphs matched in ROI")
+            return LapTimeReading(
+                ok=False,
+                error="no glyphs matched in ROI",
+                diagnostics=diag,
+            )
         parsed = parse_lap_time_text(raw)
         if parsed is None:
             return LapTimeReading(
                 ok=False,
                 text=raw,
                 error="no lap-time pattern in template symbols",
+                diagnostics=diag,
             )
         text, ms = parsed
-        return LapTimeReading(ok=True, text=text, lap_time_ms=ms)
+        return LapTimeReading(
+            ok=True, text=text, lap_time_ms=ms, diagnostics=diag
+        )
 
 
 ReaderName = Literal["mock", "tesseract", "template", "assetto_corsa"]

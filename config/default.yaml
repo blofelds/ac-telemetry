@@ -67,6 +67,14 @@ detect:
   fps: 2.0
   debounce_reads: 2
   drop_under_pressure: true
+  # Last-failure dump (ROI PNG + mask + score table) for /api/debug/detect/*.
+  # Default: keep one failure slot in RAM; do not rewrite on every OK read.
+  # Override: AC_TELEMETRY_DETECT_DEBUG_DUMP=0|1
+  debug_dump:
+    enabled: true
+    on_success: false
+    every_n_failures: 1
+    include_full_frame: false
   lap_time:
     # Readers (pick one):
     #   mock      — synthetic laps (no pixels / OCR); good for laptop + plumbing tests

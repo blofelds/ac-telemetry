@@ -39,6 +39,7 @@ def build(settings=None):
         ),
         record_lap=lap_store.append_lap,
         on_metrics=metrics.observe_detect,
+        get_capture_info=lambda: capture.stats.as_dict(),
     )
 
     app = create_app(settings, capture, store, lap_store=lap_store, detect=detect)

@@ -67,6 +67,24 @@ class LapTimeDetectSettings(BaseModel):
     match_threshold: float = 0.50
 
 
+class DetectDebugDumpSettings(BaseModel):
+    """Last-detect dump for Pi diagnosis (failure-only by default).
+
+    Keeps one ROI + mask + score table in RAM. Cheap on Pi 2B: overwrite a
+    single slot; no continuous JPEG encode in the detect loop.
+    """
+
+    # Keep last failure artifacts (recommended). Force via env
+    # AC_TELEMETRY_DETECT_DEBUG_DUMP=1/true/yes.
+    enabled: bool = True
+    # Refresh the dump on successful reads (usually leave false).
+    on_success: bool = False
+    # 1 = every failure; raise to sample if CPU-sensitive.
+    every_n_failures: int = 1
+    # Opt-in full-frame copy (larger); prefer request-time /api/debug/frame.jpg.
+    include_full_frame: bool = False
+
+
 class DetectSettings(BaseModel):
     """Low-FPS detection budget — kept separate from capture FPS."""
 
@@ -75,6 +93,9 @@ class DetectSettings(BaseModel):
     debounce_reads: int = 2
     drop_under_pressure: bool = True
     lap_time: LapTimeDetectSettings = Field(default_factory=LapTimeDetectSettings)
+    debug_dump: DetectDebugDumpSettings = Field(
+        default_factory=DetectDebugDumpSettings
+    )
 
 
 class Settings(BaseSettings):
@@ -149,12 +170,34 @@ def _parse_detect(raw: dict[str, Any]) -> DetectSettings:
         )
         if k in lap_body
     })
+    dump_body = body.get("debug_dump") or {}
+    if not isinstance(dump_body, dict):
+        dump_body = {}
+    dump = DetectDebugDumpSettings(**{
+        k: dump_body[k]
+        for k in (
+            "enabled",
+            "on_success",
+            "every_n_failures",
+            "include_full_frame",
+        )
+        if k in dump_body
+    })
+    # Env flag forces dump on (handy without editing YAML on the Pi).
+    import os
+
+    env_flag = os.environ.get("AC_TELEMETRY_DETECT_DEBUG_DUMP", "").strip().lower()
+    if env_flag in ("1", "true", "yes", "on"):
+        dump = dump.model_copy(update={"enabled": True})
+    elif env_flag in ("0", "false", "no", "off"):
+        dump = dump.model_copy(update={"enabled": False})
     return DetectSettings(
         enabled=bool(body.get("enabled", True)),
         fps=float(body.get("fps", 2.0)),
         debounce_reads=int(body.get("debounce_reads", 2)),
         drop_under_pressure=bool(body.get("drop_under_pressure", True)),
         lap_time=lap,
+        debug_dump=dump,
     )
 
 
