@@ -130,8 +130,11 @@ class DigitTemplateMatcher:
         self.template_dir = Path(template_dir)
         self.match_threshold = float(match_threshold)
         self.templates = self._load_templates(self.template_dir)
-        # Infer canvas from a digit template when present.
-        sample = self.templates.get("0")
+        # Infer canvas from any loaded digit template.
+        sample = next(
+            (self.templates[d] for d in "0123456789" if d in self.templates),
+            None,
+        )
         if sample is not None:
             self.canvas = (int(sample.shape[0]), int(sample.shape[1]))
         else:
@@ -139,7 +142,16 @@ class DigitTemplateMatcher:
 
     @property
     def has_templates(self) -> bool:
-        return all(d in self.templates for d in "0123456789")
+        """True when at least one digit PNG loaded.
+
+        Live Pi sets may be incomplete (only digits seen on-capture). Matching
+        still works for those labels; missing digits simply cannot win.
+        """
+        return any(d in self.templates for d in "0123456789")
+
+    @property
+    def missing_digits(self) -> list[str]:
+        return [d for d in "0123456789" if d not in self.templates]
 
     def match_glyph(self, glyph: Any) -> str | None:
         """Return ``'0'-'9'``, ``':'``, ``'.'``, or None."""
@@ -328,12 +340,11 @@ class DigitTemplateMatcher:
         raw: dict[str, Any] = {}
         for digit in "0123456789":
             path = template_dir / f"{digit}.png"
+            if not path.is_file():
+                continue
             image = cv2.imread(str(path), cv2.IMREAD_COLOR)
             if image is None:
-                raise FileNotFoundError(
-                    f"Missing digit template {path}. "
-                    "Need 0.png through 9.png under templates_dir."
-                )
+                raise ValueError(f"Unreadable digit template {path}")
             trimmed = _trim_to_ink(white_mask(image))
             if trimmed is None:
                 raise ValueError(
@@ -341,6 +352,12 @@ class DigitTemplateMatcher:
                     "re-crop a brighter glyph."
                 )
             raw[digit] = trimmed
+
+        if not raw:
+            raise FileNotFoundError(
+                f"No digit templates under {template_dir}. "
+                "Need at least one of 0.png … 9.png."
+            )
 
         for filename, label in (("colon.png", ":"), ("period.png", ".")):
             path = template_dir / filename
@@ -354,7 +371,7 @@ class DigitTemplateMatcher:
                 raw[label] = trimmed
 
         # Common canvas from digit ink boxes (separators are tiny).
-        digit_shapes = [raw[d].shape for d in "0123456789"]
+        digit_shapes = [raw[d].shape for d in "0123456789" if d in raw]
         canvas_h = max(h for h, _w in digit_shapes)
         canvas_w = max(w for _h, w in digit_shapes)
         return {
