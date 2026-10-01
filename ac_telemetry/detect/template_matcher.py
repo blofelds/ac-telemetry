@@ -143,30 +143,48 @@ class DigitTemplateMatcher:
 
     def match_glyph(self, glyph: Any) -> str | None:
         """Return ``'0'-'9'``, ``':'``, ``'.'``, or None."""
-        # Digits first at the normal threshold (a thin ``1`` is also narrow and
-        # must not lose to a loose colon match).
-        digit = self._best_label(
+        label, _candidates, _threshold = self.match_glyph_detailed(glyph)
+        return label
+
+    def match_glyph_detailed(
+        self, glyph: Any
+    ) -> tuple[str | None, list[dict[str, Any]], float]:
+        """Same decision as ``match_glyph``, plus scored candidates for dumps.
+
+        Match thresholds and separators are unchanged — this only retains the
+        ``TM_CCOEFF_NORMED`` floats that were previously discarded.
+        """
+        digit_threshold = self.match_threshold
+        digit, digit_scores = self._best_label(
             glyph,
             labels=tuple("0123456789"),
-            threshold=self.match_threshold,
+            threshold=digit_threshold,
         )
         if digit is not None:
-            return digit
+            return digit, digit_scores, digit_threshold
 
         h, w = int(glyph.shape[0]), int(glyph.shape[1])
         narrow = w <= max(8, int(self.canvas[1] * 0.45))
         if not narrow:
-            return None
+            return None, digit_scores, digit_threshold
 
-        sep = self._best_label(
-            glyph, labels=(".", ":"), threshold=min(0.35, self.match_threshold)
+        sep_threshold = min(0.35, self.match_threshold)
+        sep, sep_scores = self._best_label(
+            glyph, labels=(".", ":"), threshold=sep_threshold
+        )
+        # Merge digit + separator score tables (sorted by score desc).
+        merged = sorted(
+            digit_scores + sep_scores,
+            key=lambda row: row["score"],
+            reverse=True,
         )
         if sep is not None:
-            return sep
+            return sep, merged, sep_threshold
         ink = int((glyph > 0).sum())
         if ink < 60:
-            return "." if h < int(self.canvas[0] * 0.45) else ":"
-        return None
+            heuristic = "." if h < int(self.canvas[0] * 0.45) else ":"
+            return heuristic, merged, sep_threshold
+        return None, merged, digit_threshold
 
     def _best_label(
         self,
@@ -174,9 +192,10 @@ class DigitTemplateMatcher:
         *,
         labels: tuple[str, ...],
         threshold: float,
-    ) -> str | None:
+    ) -> tuple[str | None, list[dict[str, Any]]]:
         import cv2
 
+        scores: list[dict[str, Any]] = []
         best: str | None = None
         best_score = float(threshold)
         for label in labels:
@@ -190,22 +209,103 @@ class DigitTemplateMatcher:
             score = float(
                 cv2.matchTemplate(probe, template, cv2.TM_CCOEFF_NORMED).max()
             )
+            scores.append({"label": label, "score": round(score, 4)})
             if score > best_score:
                 best_score = score
                 best = label
-        return best
+        scores.sort(key=lambda row: row["score"], reverse=True)
+        return best, scores
 
     def read_symbols(self, roi_bgr: Any) -> str | None:
         """Match every glyph left-to-right into a raw symbol string."""
+        raw, _diag = self.read_symbols_with_diagnostics(roi_bgr)
+        return raw
+
+    def read_symbols_with_diagnostics(
+        self, roi_bgr: Any
+    ) -> tuple[str | None, dict[str, Any]]:
+        """Match glyphs and retain spans / per-glyph scores for a detect dump.
+
+        Does not change match decisions — only records what ``match_glyph``
+        already computed so failure dumps can explain low scores vs empty ink.
+        """
+        import numpy as np
+
+        empty: dict[str, Any] = {
+            "white_mask": {"v_min": 150, "s_max": 80, "ink_pixels": 0},
+            "spans": [],
+            "glyphs": [],
+            "mask": None,
+            "canvas": {"height": self.canvas[0], "width": self.canvas[1]},
+            "match_threshold": self.match_threshold,
+            "templates_dir": str(self.template_dir),
+            "template_labels": sorted(self.templates.keys()),
+        }
+        if roi_bgr is None or getattr(roi_bgr, "size", 0) == 0:
+            return None, empty
+
+        mask = white_mask(roi_bgr)
+        ink_pixels = int((mask > 0).sum())
+        spans = _column_spans(mask)
+        span_rows: list[dict[str, Any]] = []
+        glyph_rows: list[dict[str, Any]] = []
         symbols: list[str] = []
-        for glyph in segment_glyphs(roi_bgr):
-            label = self.match_glyph(glyph)
+        failed = False
+
+        for start, end in spans:
+            width = end - start
+            ink_rows = int((mask[:, start:end] > 0).sum(axis=0).max()) if width else 0
+            # Approximate ink-row count as rows with any ink in the span.
+            ink_row_count = int(np.count_nonzero((mask[:, start:end] > 0).any(axis=1)))
+            span_rows.append(
+                {
+                    "x0": int(start),
+                    "x1": int(end),
+                    "width": int(width),
+                    "ink_rows": ink_row_count,
+                    "max_col_ink": ink_rows,
+                }
+            )
+            # Match segment_glyphs: drop spans that fail min_rows (do not fail).
+            glyph = _trim_rows(mask[:, start:end], min_rows=3)
+            if glyph is None:
+                continue
+            label, candidates, threshold = self.match_glyph_detailed(glyph)
+            glyph_rows.append(
+                {
+                    "index": len(glyph_rows),
+                    "span": [int(start), int(end)],
+                    "candidates": candidates[:8],
+                    "chosen": label,
+                    "threshold": threshold,
+                    "canvas": {
+                        "height": int(self.canvas[0]),
+                        "width": int(self.canvas[1]),
+                    },
+                }
+            )
             if label is None:
-                return None
+                failed = True
+                break
             symbols.append(label)
-        if not symbols:
-            return None
-        return _normalize_time_symbols("".join(symbols))
+
+        diag: dict[str, Any] = {
+            "white_mask": {
+                "v_min": 150,
+                "s_max": 80,
+                "ink_pixels": ink_pixels,
+            },
+            "spans": span_rows,
+            "glyphs": glyph_rows,
+            "mask": mask,
+            "canvas": {"height": self.canvas[0], "width": self.canvas[1]},
+            "match_threshold": self.match_threshold,
+            "templates_dir": str(self.template_dir.resolve()),
+            "template_labels": sorted(self.templates.keys()),
+        }
+        if failed or not symbols:
+            return None, diag
+        return _normalize_time_symbols("".join(symbols)), diag
 
     @staticmethod
     def _load_templates(template_dir: Path) -> dict[str, Any]:
