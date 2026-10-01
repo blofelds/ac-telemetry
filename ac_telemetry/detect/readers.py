@@ -207,7 +207,7 @@ class TemplateLapTimeReader:
             )
             if not self._matcher.has_templates:
                 self._load_error = (
-                    f"digit templates incomplete under {self.templates_dir}"
+                    f"no digit templates under {self.templates_dir}"
                 )
                 self._matcher = None
                 return False
