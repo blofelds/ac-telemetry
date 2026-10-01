@@ -139,6 +139,38 @@ def test_pi_templates_rematch_dump_2_34_492_digits() -> None:
     assert "no lap-time pattern" in (reading.error or "")
 
 
+def test_pi_templates_rematch_dump_1_07_960_span_recovery() -> None:
+    """Dump ``20261002-002656``: absorb ``7`` top-bar bridge + split glued ``96``.
+
+    Ground truth ``1:07.960``. Pre-fix spans dropped the ``7`` bar (``count>=2``)
+    and left a 24px ``9``+``6`` blob → ``no glyphs matched``. After span recovery
+    digit labels are ``107960``. Separators still below ``white_mask`` — parse
+    may fail until a follow-on separator fix.
+    """
+    cv2 = _cv2()
+    from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
+
+    path = FIXTURES / "ac_720p_pi_1_07_960.png"
+    assert path.is_file(), path
+    image = cv2.imread(str(path))
+    assert image is not None
+
+    matcher = DigitTemplateMatcher(TEMPLATES_PI)
+    assert matcher.missing_digits == []
+    raw, diag = matcher.read_symbols_with_diagnostics(image)
+    chosen = [g["chosen"] for g in diag["glyphs"]]
+    assert chosen == ["1", "0", "7", "9", "6", "0"], chosen
+    assert raw == "107960"
+    assert None not in chosen
+
+    reader = TemplateLapTimeReader(TEMPLATES_PI)
+    reading = reader.read(image)
+    assert reading.text == "107960"
+    assert reading.error != "no glyphs matched in ROI"
+    assert not reading.ok
+    assert "no lap-time pattern" in (reading.error or "")
+
+
 def test_column_spans_keep_single_pixel_colon() -> None:
     import numpy as np
 
@@ -149,6 +181,72 @@ def test_column_spans_keep_single_pixel_colon() -> None:
     mask[7:10, 7] = 255
     mask[:, 10:18] = 255
     assert _column_spans(mask) == [(1, 4), (7, 8), (10, 18)]
+
+
+def test_column_spans_absorb_thin_bridge_and_split_glue() -> None:
+    """Synthetic: multi-col 1-ink bridge + oversized glued run."""
+    import numpy as np
+
+    from ac_telemetry.detect.template_matcher import (
+        _absorb_thin_bridges,
+        _raw_column_spans,
+        _split_oversized_spans,
+    )
+
+    mask = np.zeros((12, 40), np.uint8)
+    # Digit A (wide)
+    mask[:, 2:8] = 255
+    # 1-ink bridge (top-bar style) — must be >=2 cols to absorb
+    mask[0, 8:12] = 255
+    # Narrow stem
+    mask[:, 12:15] = 255
+    # Glued pair: two peaks with a valley at x=27
+    mask[:, 18:27] = 255
+    mask[:, 27] = 0
+    mask[2:6, 27] = 255  # weak valley (4 ink rows)
+    mask[:, 28:36] = 255
+    # Boost edges so valley is a local min near midpoint
+    mask[:, 18] = 255
+    mask[:, 26] = 255
+    mask[:, 28] = 255
+    mask[:, 35] = 255
+
+    raw = _raw_column_spans(mask)
+    assert (12, 15) in raw or any(s == 12 for s, _e in raw)
+    absorbed = _absorb_thin_bridges(mask, raw)
+    # Stem span should start at bridge start (8)
+    assert any(s == 8 and e == 15 for s, e in absorbed), absorbed
+
+    # Oversized glue alone
+    glue = np.zeros((12, 30), np.uint8)
+    glue[:, 2:14] = 255
+    glue[:, 14] = 40  # will set properly below
+    glue[:, 14] = 0
+    glue[4:8, 14] = 255  # valley count=4
+    glue[:, 15:26] = 255
+    glue[0:12, 2] = 255
+    glue[0:12, 13] = 255
+    glue[0:12, 15] = 255
+    glue[0:12, 25] = 255
+    spans = [(2, 26)]
+    split = _split_oversized_spans(glue, spans, typical_width=11)
+    assert len(split) == 2, split
+    assert split[0][1] == split[1][0]
+    assert all(e - s <= 16 for s, e in split), split
+
+
+def test_column_spans_skips_single_col_bridge() -> None:
+    """A lone 1-ink speck between full digits must not be absorbed."""
+    import numpy as np
+
+    from ac_telemetry.detect.template_matcher import _absorb_thin_bridges
+
+    mask = np.zeros((12, 30), np.uint8)
+    mask[:, 2:12] = 255
+    mask[5, 12] = 255  # single speck
+    mask[:, 13:23] = 255
+    raw = [(2, 12), (13, 23)]
+    assert _absorb_thin_bridges(mask, raw) == raw
 
 
 def test_template_reader_empty_roi() -> None:

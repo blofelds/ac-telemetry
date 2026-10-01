@@ -23,7 +23,12 @@ def white_mask(roi_bgr: Any) -> Any:
     return cv2.inRange(hsv, (0, 0, 150), (180, 80, 255))
 
 
-def segment_glyphs(roi_bgr: Any, *, min_rows: int = 3) -> list[Any]:
+def segment_glyphs(
+    roi_bgr: Any,
+    *,
+    min_rows: int = 3,
+    canvas_width: int | None = None,
+) -> list[Any]:
     """Return one binary glyph per ink blob, left to right.
 
     ``min_rows`` is lower than the speed reader (6) so colon/period dots
@@ -33,20 +38,37 @@ def segment_glyphs(roi_bgr: Any, *, min_rows: int = 3) -> list[Any]:
         return []
     mask = white_mask(roi_bgr)
     glyphs: list[Any] = []
-    for start, end in _column_spans(mask):
+    for start, end in _column_spans(mask, canvas_width=canvas_width):
         glyph = _trim_rows(mask[:, start:end], min_rows=min_rows)
         if glyph is not None:
             glyphs.append(glyph)
     return glyphs
 
 
-def _column_spans(mask: Any) -> list[tuple[int, int]]:
-    """Ink runs left-to-right.
+def _column_spans(
+    mask: Any, *, canvas_width: int | None = None
+) -> list[tuple[int, int]]:
+    """Ink runs left-to-right, with thin-bridge absorb and oversize split.
 
-    Width may be 1: AC ``:`` / ``.`` are often a single bright column after
-    ``white_mask``. Requiring ``>= 2`` dropped the colon on real 720p crops
-    and produced digit soup like ``183188`` instead of ``1:03.168``.
+    Base runs still require ``count >= 2`` so isolated 1-ink separator dust
+    does not glue neighboring digits (see detect-dump diagnosis caveat).
+    Width may be 1 when a colon column itself has ``count >= 2``.
+
+    Recovery (cheap column projection only — Pi 2B friendly):
+    1. Absorb contiguous 1-ink bridges into the *following* span (``7`` top
+       bar severed by the ``>= 2`` rule).
+    2. Split spans wider than ``~1.5×`` a digit at digit-width valleys
+       (glued ``9``+``6`` blobs).
     """
+    spans = _raw_column_spans(mask)
+    spans = _absorb_thin_bridges(mask, spans)
+    typical = canvas_width if canvas_width and canvas_width > 0 else None
+    spans = _split_oversized_spans(mask, spans, typical_width=typical)
+    return spans
+
+
+def _raw_column_spans(mask: Any) -> list[tuple[int, int]]:
+    """Runs of columns with ``ink_rows >= 2`` (no recovery)."""
     counts = (mask > 0).sum(axis=0)
     spans: list[tuple[int, int]] = []
     start: int | None = None
@@ -60,6 +82,136 @@ def _column_spans(mask: Any) -> list[tuple[int, int]]:
     if start is not None and mask.shape[1] - start >= 1:
         spans.append((start, mask.shape[1]))
     return spans
+
+
+def _absorb_thin_bridges(
+    mask: Any, spans: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Join contiguous 1-ink-row bridges into the following digit span.
+
+    Soft MJPEG often leaves a digit's thin stroke (``7`` top bar) as a run of
+    ``count == 1`` columns between two ``count >= 2`` bodies. Extending the
+    *next* span leftward restores the glyph without flipping the base
+    threshold to ``>= 1`` (which would glue ``3``+``5`` on other dumps).
+
+    Require at least two bridge columns so a single noisy 1-ink speck between
+    full-width digits is left alone (absorbing it can flip ``5``→``9``).
+    """
+    if len(spans) < 2:
+        return spans
+    counts = (mask > 0).sum(axis=0)
+    out: list[tuple[int, int]] = [spans[0]]
+    for start, end in spans[1:]:
+        _, prev_end = out[-1]
+        bridge = range(prev_end, start)
+        if (
+            len(bridge) >= 2
+            and all(int(counts[x]) == 1 for x in bridge)
+        ):
+            out.append((prev_end, end))
+        else:
+            out.append((start, end))
+    return out
+
+
+def _estimate_typical_digit_width(spans: list[tuple[int, int]]) -> int:
+    """Median width of non-separator spans; fallback for template-less calls."""
+    widths = sorted(end - start for start, end in spans if end - start >= 4)
+    if not widths:
+        return 11
+    return int(widths[len(widths) // 2])
+
+
+def _split_oversized_spans(
+    mask: Any,
+    spans: list[tuple[int, int]],
+    *,
+    typical_width: int | None = None,
+) -> list[tuple[int, int]]:
+    """Split spans ≳ 1.5× digit width at the weakest digit-pitch valley."""
+    if not spans:
+        return spans
+    typical = typical_width or _estimate_typical_digit_width(spans)
+    typical = max(4, int(typical))
+    max_width = max(typical + 2, int(round(typical * 1.5)))
+    min_piece = max(3, typical // 2)
+    counts = (mask > 0).sum(axis=0)
+    out: list[tuple[int, int]] = []
+    for start, end in spans:
+        out.extend(
+            _split_one_span(
+                counts,
+                start,
+                end,
+                typical_width=typical,
+                max_width=max_width,
+                min_piece=min_piece,
+            )
+        )
+    return out
+
+
+def _split_one_span(
+    counts: Any,
+    start: int,
+    end: int,
+    *,
+    typical_width: int,
+    max_width: int,
+    min_piece: int,
+) -> list[tuple[int, int]]:
+    """Iteratively cut an oversized run near expected digit boundaries."""
+    width = end - start
+    if width <= max_width:
+        return [(start, end)]
+
+    n = max(2, int(round(width / typical_width)))
+    cut_target = start + width // n
+    lo = max(start + min_piece, cut_target - max(2, typical_width // 4))
+    hi = min(end - min_piece, cut_target + max(2, typical_width // 4) + 1)
+    if lo >= hi:
+        return [(start, end)]
+
+    # Prefer a local valley near the digit-pitch target. Absolute min in the
+    # window can land inside the next digit body (e.g. count=5 at x=52 while
+    # the true ``9``|``6`` touch valley is x=50).
+    local_mins: list[int] = []
+    for x in range(lo, hi):
+        c = int(counts[x])
+        left = int(counts[x - 1]) if x - 1 >= start else c + 1
+        right = int(counts[x + 1]) if x + 1 < end else c + 1
+        if c <= left and c <= right:
+            local_mins.append(x)
+    if local_mins:
+        cut = min(local_mins, key=lambda x: (abs(x - cut_target), int(counts[x])))
+    else:
+        window = [int(counts[x]) for x in range(lo, hi)]
+        cut = lo + int(
+            min(
+                range(len(window)),
+                key=lambda i: (window[i], abs((lo + i) - cut_target)),
+            )
+        )
+    if cut <= start or cut >= end:
+        return [(start, end)]
+
+    left = _split_one_span(
+        counts,
+        start,
+        cut,
+        typical_width=typical_width,
+        max_width=max_width,
+        min_piece=min_piece,
+    )
+    right = _split_one_span(
+        counts,
+        cut,
+        end,
+        typical_width=typical_width,
+        max_width=max_width,
+        min_piece=min_piece,
+    )
+    return left + right
 
 
 def _trim_rows(glyph: Any, *, min_rows: int) -> Any | None:
@@ -258,7 +410,7 @@ class DigitTemplateMatcher:
 
         mask = white_mask(roi_bgr)
         ink_pixels = int((mask > 0).sum())
-        spans = _column_spans(mask)
+        spans = _column_spans(mask, canvas_width=self.canvas[1])
         span_rows: list[dict[str, Any]] = []
         glyph_rows: list[dict[str, Any]] = []
         symbols: list[str] = []
