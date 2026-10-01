@@ -1,33 +1,41 @@
 # AC 720p Pi templates (live HDMI detect path)
 
-Native-resolution PNGs cropped from a **live Pi detect dump** ROI
-(`ac-detect-dump-20261001-221758`, ground truth `1:35.113`). Mask-aware tight
+Native-resolution PNGs cropped from **live Pi detect dumps**. Mask-aware tight
 crops (non-ink zeroed, ink bbox trimmed) — soft MJPEG / HDMI capture domain,
-not the sharper VLC `ac_720p_capture` set.
+not the sharper VLC `ac_720p_capture` set. Do **not** hybridize missing glyphs
+from VLC without documenting the risk (`1↔7` / `3↔9` / `5↔6` lookalikes).
 
-| File | Symbol | Source |
-| --- | --- | --- |
-| `1.png` | `1` | Live dump span `[3,7]` |
-| `3.png` | `3` | Live dump span `[13,24]` |
-| `5.png` | `5` | Live dump span `[25,36]` |
-| `0.png`, `2.png`, `4.png`, `6.png`, `7.png`, `8.png`, `9.png` | — | **Missing** (not in this ROI) |
-| `colon.png`, `period.png` | — | **Missing** (separator recovery is follow-on) |
+## Inventory (complete 0–9 + separators)
 
-Do **not** silently copy missing digits from `ac_720p_capture` — that mixes VLC
-sharpness with soft Pi MJPEG and reintroduces the `1↔7` / `3↔9` / `5↔6`
-lookalike failures diagnosed on this dump. Fill gaps with more live Pi Save
-glyph crops when those digits appear on the HUD.
+| File | Symbol | Source dump | Notes |
+| --- | --- | --- | --- |
+| `0.png` | `0` | `ac-detect-dump-20261001-234819` | Span `[18,28]`, GT `1:10.375`; y clipped `<14` |
+| `1.png` | `1` | `ac-detect-dump-20261001-221758` | Span `[3,7]`, GT `1:35.113` |
+| `2.png` | `2` | `ac-detect-dump-20261002-000013` | Minutes span `[3,13]`, GT `2:34.492` |
+| `3.png` | `3` | `ac-detect-dump-20261001-221758` | Span `[13,24]`, GT `1:35.113` |
+| `4.png` | `4` | `ac-detect-dump-20261002-000013` | Isolated post-period `[45,55]`, GT `2:34.492` |
+| `5.png` | `5` | `ac-detect-dump-20261001-221758` | Span `[25,36]`, GT `1:35.113` |
+| `6.png` | `6` | `ac-detect-dump-20261001-235208` | Split glued `[39,61]` at x=50; y clipped `<14` |
+| `7.png` | `7` | `ac-detect-dump-20261001-234819` | Span `[46,54]`, GT `1:10.375` |
+| `8.png` | `8` | `ac-detect-dump-20261001-231449` | Thousandths span `[53,64]` |
+| `9.png` | `9` | `ac-detect-dump-20261001-231449` | Tenths span `[34,45]` |
+| `colon.png` | `:` | `ac-detect-dump-20261001-232108` | Tight color-ROI (2×10); midtone |
+| `period.png` | `.` | `ac-detect-dump-20261001-232108` | Tight color-ROI (3×2); midtone |
 
-Point config here for Pi 720p template matching:
+## Domain + matcher honesty
+
+- **Digits** rematch soft-Pi ROIs that the VLC set mislabeled (`796719` →
+  `135113` on dump `221758`; `234492` on dump `000013`).
+- **Separators are included** as live-domain PNGs, but current
+  `white_mask` (`V≥150`) zeros their midtone ink on load, and mask-path span
+  recovery still drops 1-row colon / faint period. Parse to `1:35.113` needs a
+  **follow-on** separator / span fix — not soft-MJPEG matcher v2 in this change.
+- Point config here for Pi 720p template matching:
 
 ```yaml
 detect.lap_time.reader: template
 detect.lap_time.templates_dir: templates/lap_time_digits/ac_720p_pi
 glyphs_dir: templates/lap_time_digits/ac_720p_pi
 ```
-
-Offline rematch of the dump ROI with this incomplete set yields digit labels
-`135113` (beats capture-domain `796719`). Separators are still absent — parse
-to `1:35.113` needs a later scoped separator fix.
 
 See [`../README.md`](../README.md) and [`docs/ROI.md`](../../../docs/ROI.md).
