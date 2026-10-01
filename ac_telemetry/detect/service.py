@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from ac_telemetry.detect.dump import LastDetectDump, build_dump_meta
 from ac_telemetry.detect.readers import (
     LapTimeReader,
     LapTimeReading,
@@ -67,16 +68,21 @@ class DetectService:
     get_session_id: Callable[[], str | None]
     record_lap: Callable[[dict[str, Any]], dict[str, Any]]
     on_metrics: Callable[..., None] | None = None
+    # Optional capture identity for detect dumps (frames counter, age).
+    get_capture_info: Callable[[], dict[str, Any]] | None = None
     state: LiveLapState = field(default_factory=LiveLapState)
     _thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _busy: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _dump_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _reader: LapTimeReader | None = field(default=None, init=False, repr=False)
     _stable_text: str | None = field(default=None, init=False, repr=False)
     _stable_ms: int | None = field(default=None, init=False, repr=False)
     _stable_count: int = field(default=0, init=False, repr=False)
     _prev_stable_ms: int | None = field(default=None, init=False, repr=False)
+    _last_dump: LastDetectDump = field(default_factory=LastDetectDump, init=False, repr=False)
+    _failures_since_dump: int = field(default=0, init=False, repr=False)
 
     def start(self) -> None:
         detect = self.settings.detect
@@ -106,10 +112,11 @@ class DetectService:
             )
             self._thread.start()
             logger.info(
-                "Detect started reader=%s mode=%s fps=%.1f",
+                "Detect started reader=%s mode=%s fps=%.1f debug_dump=%s",
                 detect.lap_time.reader,
                 detect.lap_time.mode,
                 detect.fps,
+                detect.debug_dump.enabled,
             )
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -127,6 +134,26 @@ class DetectService:
         self._stable_text = None
         self._stable_ms = None
         self._stable_count = 0
+
+    def get_last_dump(self) -> LastDetectDump:
+        """Return the in-memory last detect dump (may be empty)."""
+        return self._last_dump
+
+    def last_dump_json(self) -> dict[str, Any] | None:
+        with self._dump_lock:
+            return self._last_dump.as_json()
+
+    def last_dump_roi_png(self) -> bytes | None:
+        with self._dump_lock:
+            return self._last_dump.roi_png()
+
+    def last_dump_mask_png(self) -> bytes | None:
+        with self._dump_lock:
+            return self._last_dump.mask_png()
+
+    def last_dump_annotated_png(self) -> bytes | None:
+        with self._dump_lock:
+            return self._last_dump.annotated_png()
 
     def _run(self) -> None:
         detect = self.settings.detect
@@ -165,19 +192,105 @@ class DetectService:
                 roi_img = crop_roi(frame, roi)
             elif frame is None:
                 reading = LapTimeReading(ok=False, error="no frame yet")
-                self._handle_reading(detect, reading, time.perf_counter() - started)
+                self._handle_reading(
+                    detect, reading, time.perf_counter() - started, roi_img=None
+                )
                 return
             elif roi is None:
                 reading = LapTimeReading(ok=False, error="rois.lap_time not configured")
-                self._handle_reading(detect, reading, time.perf_counter() - started)
+                self._handle_reading(
+                    detect, reading, time.perf_counter() - started, roi_img=None
+                )
                 return
 
         reading = self._reader.read(roi_img)
         latency = time.perf_counter() - started
-        self._handle_reading(detect, reading, latency)
+        self._handle_reading(detect, reading, latency, roi_img=roi_img)
+
+    def _should_stash_dump(self, detect: DetectSettings, *, ok: bool) -> bool:
+        dump_cfg = detect.debug_dump
+        if not dump_cfg.enabled:
+            return False
+        if ok:
+            return bool(dump_cfg.on_success)
+        self._failures_since_dump += 1
+        every = max(1, int(dump_cfg.every_n_failures))
+        if self._failures_since_dump >= every:
+            self._failures_since_dump = 0
+            return True
+        return False
+
+    def _stash_dump(
+        self,
+        detect: DetectSettings,
+        reading: LapTimeReading,
+        latency: float,
+        *,
+        roi_img: Any | None,
+        ok: bool,
+    ) -> None:
+        if not self._should_stash_dump(detect, ok=ok):
+            return
+
+        diagnostics = reading.diagnostics
+        mask = None
+        if diagnostics is not None:
+            mask = diagnostics.get("mask")
+            # If mask missing but we have ROI, compute white_mask cheaply once.
+            if mask is None and roi_img is not None:
+                try:
+                    from ac_telemetry.detect.template_matcher import white_mask
+
+                    mask = white_mask(roi_img)
+                except Exception:  # noqa: BLE001
+                    mask = None
+
+        capture_info = None
+        if self.get_capture_info is not None:
+            try:
+                capture_info = self.get_capture_info()
+            except Exception:  # noqa: BLE001
+                capture_info = None
+
+        # Copy ROI/mask so later capture overwrites cannot mutate the dump.
+        roi_copy = None
+        mask_copy = None
+        try:
+            if roi_img is not None:
+                roi_copy = roi_img.copy()
+            if mask is not None:
+                mask_copy = mask.copy()
+        except AttributeError:
+            roi_copy = roi_img
+            mask_copy = mask
+
+        meta = build_dump_meta(
+            settings=self.settings,
+            ok=ok,
+            error=None if ok else (reading.error or "read failed"),
+            latency_seconds=latency,
+            reading_text=reading.text or "",
+            reading_ms=reading.lap_time_ms,
+            diagnostics=diagnostics,
+            roi=self.settings.rois.get("lap_time"),
+            roi_bgr=roi_copy,
+            mask=mask_copy,
+            capture_info=capture_info,
+        )
+
+        with self._dump_lock:
+            self._last_dump.meta = meta
+            self._last_dump.roi_bgr = roi_copy
+            self._last_dump.mask = mask_copy
+            self._last_dump.captured_at = time.time()
 
     def _handle_reading(
-        self, detect: DetectSettings, reading: LapTimeReading, latency: float
+        self,
+        detect: DetectSettings,
+        reading: LapTimeReading,
+        latency: float,
+        *,
+        roi_img: Any | None = None,
     ) -> None:
         self.state.last_latency_seconds = round(latency, 4)
         self.state.last_detect_at = time.time()
@@ -185,6 +298,7 @@ class DetectService:
         if not reading.ok or reading.lap_time_ms is None:
             self.state.failures += 1
             self.state.last_error = reading.error or "read failed"
+            self._stash_dump(detect, reading, latency, roi_img=roi_img, ok=False)
             if self.on_metrics is not None:
                 self.on_metrics(latency_seconds=latency, failure=True)
             return
@@ -193,6 +307,7 @@ class DetectService:
         self.state.last_error = None
         self.state.displayed_time = reading.text
         self.state.displayed_time_ms = reading.lap_time_ms
+        self._stash_dump(detect, reading, latency, roi_img=roi_img, ok=True)
         if self.on_metrics is not None:
             self.on_metrics(
                 latency_seconds=latency,
@@ -254,7 +369,7 @@ class DetectService:
             "lap_number": self.state.lap_number,
             "lap_time": record_text,
             "lap_time_ms": record_ms,
-            "source": self._reader.name,
+            "source": self._reader.name if self._reader is not None else "unknown",
             "raw_text": reading.text,
         }
         try:
