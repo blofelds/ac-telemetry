@@ -19,6 +19,7 @@ TEMPLATES_1080P = resolve_templates_dir("templates/lap_time_digits/ac_1080p")
 TEMPLATES_CAPTURE = resolve_templates_dir(
     "templates/lap_time_digits/ac_720p_capture"
 )
+TEMPLATES_PI = resolve_templates_dir("templates/lap_time_digits/ac_720p_pi")
 
 
 def _cv2():
@@ -74,6 +75,39 @@ def test_template_reader_reads_ac_720p_capture_vlc_crop() -> None:
     assert reading.ok, reading.error
     assert reading.text == "1:03.168"
     assert reading.lap_time_ms == 63_168
+
+
+def test_pi_templates_rematch_live_dump_digits() -> None:
+    """Live Pi dump ROI rematches digit labels with ac_720p_pi (not 796719).
+
+    Ground truth ``1:35.113``. Capture-domain templates chose ``796719``.
+    Live-sourced ``1``/``3``/``5`` should label spans ``135113``. Separators
+    are still missing from the mask path — parse may fail until a follow-on
+    separator fix; this test only asserts digit labels beat the dump failure.
+    """
+    cv2 = _cv2()
+    from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
+
+    path = FIXTURES / "ac_720p_pi_1_35_113.png"
+    assert path.is_file(), path
+    image = cv2.imread(str(path))
+    assert image is not None
+
+    matcher = DigitTemplateMatcher(TEMPLATES_PI)
+    assert matcher.has_templates
+    assert matcher.missing_digits == list("0246789")
+    raw, diag = matcher.read_symbols_with_diagnostics(image)
+    chosen = [g["chosen"] for g in diag["glyphs"]]
+    assert chosen == ["1", "3", "5", "1", "1", "3"], chosen
+    assert raw == "135113"
+    assert raw != "796719"
+
+    # Reader surface: digits OK, separators still absent → pattern fail (F).
+    reader = TemplateLapTimeReader(TEMPLATES_PI)
+    reading = reader.read(image)
+    assert reading.text == "135113"
+    assert not reading.ok
+    assert "no lap-time pattern" in (reading.error or "")
 
 
 def test_column_spans_keep_single_pixel_colon() -> None:

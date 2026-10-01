@@ -116,8 +116,8 @@ class Settings(BaseSettings):
     port: int = 8741
     data_dir: Path = Path("data/sessions")
     # Where /debug "Save glyph" writes PNG templates cut from the live ROI.
-    # Keep separate from bundled ac_720p so ACC placeholders are not overwritten.
-    glyphs_dir: Path = Path("templates/lap_time_digits/ac_720p_capture")
+    # Prefer live Pi set (sibling to VLC ac_720p_capture); keep ACC ac_720p intact.
+    glyphs_dir: Path = Path("templates/lap_time_digits/ac_720p_pi")
 
     # Filled from YAML profiles after load
     profiles: dict[str, CaptureProfile] = Field(default_factory=dict)
@@ -264,7 +264,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
             else Path(
                 data.get(
                     "glyphs_dir",
-                    "templates/lap_time_digits/ac_720p_capture",
+                    "templates/lap_time_digits/ac_720p_pi",
                 )
             )
         ),
