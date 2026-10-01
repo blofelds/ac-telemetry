@@ -106,4 +106,34 @@ Empty displayed/recorded time usually means one of:
 - Watch `ac_telemetry_detect_failures_total` and `ac_telemetry_detect_drops_total` on `/metrics`.
 - If drops climb, lower `detect.fps` or keep using `mock` until the Pi has headroom.
 
+### Collect a detect dump (preferred for `no glyphs matched in ROI`)
+
+When `lap.last_error` stays `no glyphs matched in ROI` (or template parse fails),
+do **not** guess from `/api/debug/roi/*.jpg` — that JPEG is a fresh re-encode of a
+new crop. Pull the **last detect dump** (exact BGR crop + white_mask + per-glyph
+scores) instead:
+
+```bash
+PI="${PI:-http://127.0.0.1:8741}"
+BUNDLE="$HOME/ac-detect-dump-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BUNDLE" && cd "$BUNDLE"
+
+# LAST lap digits must be visible on the PS5 HUD while this runs
+sleep 2
+curl -sS "$PI/api/debug/detect/last.json" -o last.json
+curl -sS "$PI/api/debug/detect/last_roi.png" -o last_roi.png
+curl -sS "$PI/api/debug/detect/last_mask.png" -o last_mask.png
+curl -sS "$PI/api/debug/detect/last_annotated.png" -o last_annotated.png
+curl -sS "$PI/api/status" -o status.json
+
+zip -r "../$(basename "$BUNDLE").zip" .
+echo "Bundle: $BUNDLE.zip"
+```
+
+- Dump is **failure-only** by default (`detect.debug_dump.enabled: true`,
+  `on_success: false`). Force on with `AC_TELEMETRY_DETECT_DEBUG_DUMP=1`.
+- Attach the zip in chat, or drop it where the Latitude worker can read it.
+- Decision tree (mask empty vs low scores vs separators): see the lap-detect
+  debug plan in project Context / ask the coordinating agent.
+
 - Collect: `GET /health` JSON, `GET /api/laps/current`, last 50 log lines, `v4l2-ctl --list-devices` output (if hardware), and whether mock works on the same host.
