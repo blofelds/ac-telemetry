@@ -25,11 +25,14 @@ from VLC without documenting the risk (`1↔7` / `3↔9` / `5↔6` lookalikes).
 ## Domain + matcher honesty
 
 - **Digits** rematch soft-Pi ROIs that the VLC set mislabeled (`796719` →
-  `135113` on dump `221758`; `234492` on dump `000013`).
+  `135113` on dump `221758`; `234492` on dump `000013`; `107960` on dump
+  `20261002-002656` after span recovery).
+- **Digit span recovery** absorbs multi-column 1-ink bridges (severed `7` top
+  bar) and splits oversized glued runs at digit-pitch valleys (`9`+`6`).
 - **Separators are included** as live-domain PNGs, but current
-  `white_mask` (`V≥150`) zeros their midtone ink on load, and mask-path span
-  recovery still drops 1-row colon / faint period. Parse to `1:35.113` needs a
-  **follow-on** separator / span fix — not soft-MJPEG matcher v2 in this change.
+  `white_mask` (`V≥150`) zeros their midtone ink on load, so colon/period still
+  do not enter the symbol string. Parse to `1:07.960` / `1:35.113` needs a
+  **follow-on** separator fix — not soft-MJPEG matcher v2.
 - Point config here for Pi 720p template matching:
 
 ```yaml
