@@ -62,6 +62,22 @@ API: `POST /api/debug/glyphs/save` `{ "symbol": "5", "x":…, "y":…, "width":�
    `/api/debug/overlay/lap_time.jpg`.
 7. After ROI is good, use **Save glyph** (above) to build real AC templates.
 
+### Detect dump (exact crop the matcher saw)
+
+`/api/debug/roi/*.jpg` is a **fresh JPEG** of a **new** handoff copy — useful for
+eyeballing placement, but **not** bit-identical to the detect tick that failed.
+When `last_error` is `no glyphs matched in ROI`, pull the last detect dump:
+
+| Endpoint | Content |
+| --- | --- |
+| `GET /api/debug/detect/last.json` | Spans, per-glyph top scores, raw/parsed, config, git SHA, OpenCV version, ROI hash, `last_error` |
+| `GET /api/debug/detect/last_roi.png` | Lossless PNG of the exact BGR crop the detect thread used |
+| `GET /api/debug/detect/last_mask.png` | `white_mask` of that crop |
+| `GET /api/debug/detect/last_annotated.png` | Optional span boxes + chosen labels (encoded on request) |
+
+Default: keep **one failure slot** in RAM (`detect.debug_dump`). See
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the curl/zip checklist.
+
 JPEG comes from the in-memory latest-frame handoff (`cv2.imencode`). No ffmpeg;
 encode runs outside the capture lock.
 
