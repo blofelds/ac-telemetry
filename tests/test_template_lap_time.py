@@ -81,10 +81,8 @@ def test_pi_templates_rematch_live_dump_digits() -> None:
     """Live Pi dump ROI rematches digit labels with ac_720p_pi (not 796719).
 
     Ground truth ``1:35.113``. Capture-domain templates chose ``796719``.
-    Full live-sourced ``0–9`` set should label spans ``135113``. Separator
-    PNGs ship but midtone ink is zeroed by ``white_mask`` on load, and mask
-    span recovery still drops ``:`` / ``.`` — parse may fail until a follow-on
-    separator fix; this test only asserts digit labels beat the dump failure.
+    Full live-sourced ``0–9`` set labels digit spans; midtone gap recovery
+    restores ``:`` / ``.`` so parse succeeds.
     """
     cv2 = _cv2()
     from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
@@ -97,25 +95,25 @@ def test_pi_templates_rematch_live_dump_digits() -> None:
     matcher = DigitTemplateMatcher(TEMPLATES_PI)
     assert matcher.has_templates
     assert matcher.missing_digits == []
+    assert ":" in matcher.templates and "." in matcher.templates
     raw, diag = matcher.read_symbols_with_diagnostics(image)
-    chosen = [g["chosen"] for g in diag["glyphs"]]
-    assert chosen == ["1", "3", "5", "1", "1", "3"], chosen
-    assert raw == "135113"
+    digits = [g["chosen"] for g in diag["glyphs"] if g["chosen"] not in ".:"]
+    assert digits == ["1", "3", "5", "1", "1", "3"], digits
+    assert raw == "1:35.113"
     assert raw != "796719"
 
-    # Reader surface: digits OK, separators still absent → pattern fail (F).
     reader = TemplateLapTimeReader(TEMPLATES_PI)
     reading = reader.read(image)
-    assert reading.text == "135113"
-    assert not reading.ok
-    assert "no lap-time pattern" in (reading.error or "")
+    assert reading.ok, reading.error
+    assert reading.text == "1:35.113"
+    assert reading.lap_time_ms == 95_113
 
 
 def test_pi_templates_rematch_dump_2_34_492_digits() -> None:
     """Second live dump covers ``2``/``4``/``9`` from the completed Pi set.
 
-    Ground truth ``2:34.492`` (dump ``20261002-000013``). Separators still
-    absent from mask spans — assert digit soup only.
+    Ground truth ``2:34.492`` (dump ``20261002-000013``). Colon may come from
+    midtone gap match; period can fall back to digit-soup normalize.
     """
     cv2 = _cv2()
     from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
@@ -128,24 +126,22 @@ def test_pi_templates_rematch_dump_2_34_492_digits() -> None:
     matcher = DigitTemplateMatcher(TEMPLATES_PI)
     assert matcher.missing_digits == []
     raw, diag = matcher.read_symbols_with_diagnostics(image)
-    chosen = [g["chosen"] for g in diag["glyphs"]]
-    assert chosen == ["2", "3", "4", "4", "9", "2"], chosen
-    assert raw == "234492"
+    digits = [g["chosen"] for g in diag["glyphs"] if g["chosen"] not in ".:"]
+    assert digits == ["2", "3", "4", "4", "9", "2"], digits
+    assert raw == "2:34.492"
 
     reader = TemplateLapTimeReader(TEMPLATES_PI)
     reading = reader.read(image)
-    assert reading.text == "234492"
-    assert not reading.ok
-    assert "no lap-time pattern" in (reading.error or "")
+    assert reading.ok, reading.error
+    assert reading.text == "2:34.492"
+    assert reading.lap_time_ms == 154_492
 
 
 def test_pi_templates_rematch_dump_1_07_960_span_recovery() -> None:
-    """Dump ``20261002-002656``: absorb ``7`` top-bar bridge + split glued ``96``.
+    """Dump ``20261002-002656``: span recovery + separator recovery → parse.
 
-    Ground truth ``1:07.960``. Pre-fix spans dropped the ``7`` bar (``count>=2``)
-    and left a 24px ``9``+``6`` blob → ``no glyphs matched``. After span recovery
-    digit labels are ``107960``. Separators still below ``white_mask`` — parse
-    may fail until a follow-on separator fix.
+    Ground truth ``1:07.960``. Span recovery yields digits ``107960``; midtone
+    gap match inserts ``:`` / ``.`` (normalize remains the digit-soup fallback).
     """
     cv2 = _cv2()
     from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
@@ -158,17 +154,31 @@ def test_pi_templates_rematch_dump_1_07_960_span_recovery() -> None:
     matcher = DigitTemplateMatcher(TEMPLATES_PI)
     assert matcher.missing_digits == []
     raw, diag = matcher.read_symbols_with_diagnostics(image)
-    chosen = [g["chosen"] for g in diag["glyphs"]]
-    assert chosen == ["1", "0", "7", "9", "6", "0"], chosen
-    assert raw == "107960"
-    assert None not in chosen
+    digits = [g["chosen"] for g in diag["glyphs"] if g["chosen"] not in ".:"]
+    seps = [g for g in diag["glyphs"] if g.get("role") == "separator"]
+    assert digits == ["1", "0", "7", "9", "6", "0"], digits
+    assert raw == "1:07.960"
+    assert {g["chosen"] for g in seps} == {":", "."}
+    assert None not in digits
 
     reader = TemplateLapTimeReader(TEMPLATES_PI)
     reading = reader.read(image)
-    assert reading.text == "107960"
+    assert reading.ok, reading.error
+    assert reading.text == "1:07.960"
+    assert reading.lap_time_ms == 67_960
     assert reading.error != "no glyphs matched in ROI"
-    assert not reading.ok
-    assert "no lap-time pattern" in (reading.error or "")
+
+
+def test_normalize_restores_digit_only_separators() -> None:
+    from ac_telemetry.detect.template_matcher import _normalize_time_symbols
+
+    assert _normalize_time_symbols("107960") == "1:07.960"
+    assert _normalize_time_symbols("103168") == "1:03.168"
+    assert _normalize_time_symbols("146177") == "1:46.177"
+    assert _normalize_time_symbols("1246177") == "12:46.177"
+    assert _normalize_time_symbols("1:07960") == "1:07.960"
+    # Seconds ≥ 60 must not become a fake lap time.
+    assert _normalize_time_symbols("199999") == "199999"
 
 
 def test_column_spans_keep_single_pixel_colon() -> None:
