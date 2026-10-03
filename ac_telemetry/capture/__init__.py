@@ -503,5 +503,8 @@ class CaptureService:
             if sleep_for > 0:
                 # Wait in small slices so stop() is responsive on a slow Pi.
                 deadline = time.monotonic() + sleep_for
-                while not self._stop.is_set() and time.monotonic() < deadline:
-                    time.sleep(min(0.05, deadline - time.monotonic()))
+                while not self._stop.is_set():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(0.05, remaining))
