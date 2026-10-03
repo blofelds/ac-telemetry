@@ -48,6 +48,15 @@ port: 8741
 # Where session + lap CSV files are written
 data_dir: data/sessions
 
+# Bounded card-native tee (/api/debug/record/*) — full frames from the capture
+# thread (does not open a second /dev/video0). Default is repo-local; on the Pi
+# set to ~/ac-telemetry-testdata/card (or copy clips there after recording).
+# Env: AC_TELEMETRY_RECORD_DIR, AC_TELEMETRY_RECORD_DEFAULT_SECONDS,
+# AC_TELEMETRY_RECORD_MAX_SECONDS.
+record_dir: data/recordings
+record_default_seconds: 60
+record_max_seconds: 120
+
 # Where /debug "Save glyph" writes PNG crops from the live lap_time ROI.
 # Same folder as detect.lap_time.templates_dir below. Live Pi set is complete
 # (0–9 + : / . from detect dumps). Bundled ac_720p is ACC (wrong game).

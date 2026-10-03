@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Protocol
 
+from ac_telemetry.record import FrameRecorder
 from ac_telemetry.settings import CaptureProfile, Settings, normalize_backend
 
 logger = logging.getLogger(__name__)
@@ -325,6 +326,7 @@ class CaptureService:
 
     settings: Settings
     stats: CaptureStats = field(default_factory=CaptureStats)
+    recorder: FrameRecorder | None = field(default=None, init=False, repr=False)
     _thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _on_start: Callable[[CaptureStats], str] | None = field(
@@ -336,6 +338,20 @@ class CaptureService:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _frame_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _latest_frame: object | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        profile = None
+        try:
+            profile = self.settings.active_profile()
+        except Exception:  # noqa: BLE001 — settings may be incomplete in unit tests
+            profile = None
+        fps = float(profile.fps) if profile is not None else 10.0
+        self.recorder = FrameRecorder(
+            output_dir=self.settings.record_dir,
+            default_seconds=self.settings.record_default_seconds,
+            max_seconds=self.settings.record_max_seconds,
+            fps=fps,
+        )
 
     def set_session_hooks(self, on_start, on_stop) -> None:
         """CSV (or later store) callbacks for session start/stop."""
@@ -377,6 +393,11 @@ class CaptureService:
         thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout)
+        if self.recorder is not None:
+            try:
+                self.recorder.stop()
+            except Exception:  # noqa: BLE001
+                logger.debug("Recorder stop during capture shutdown failed", exc_info=True)
 
     def _run(self) -> None:
         profile = self.settings.active_profile()
@@ -462,6 +483,10 @@ class CaptureService:
             # Publish latest frame for detect (replace; never queue — drop old).
             with self._frame_lock:
                 self._latest_frame = frame
+
+            # Optional card-native tee (same pixels detect sees; no second video0).
+            if self.recorder is not None:
+                self.recorder.offer_frame(frame)
 
             now = time.time()
             self.stats.frames += 1
