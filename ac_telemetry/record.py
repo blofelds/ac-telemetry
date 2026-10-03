@@ -2,13 +2,15 @@
 
 Writes full-resolution frames the capture loop already owns — never opens
 ``/dev/video0`` itself. Pi 2B-friendly: short max duration, subsampled write
-FPS, small drop-queue, MJPEG AVI by default.
+FPS, JPEG→ffmpeg pipe (fallback: OpenCV MJPEG VideoWriter).
 """
 
 from __future__ import annotations
 
 import logging
 import queue
+import shutil
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -18,15 +20,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Hard caps so a hung client cannot fill the SD card / RAM on a 1 GB Pi.
 DEFAULT_DURATION_SECONDS = 60
 MAX_DURATION_SECONDS = 120
 MIN_DURATION_SECONDS = 1
-# Default write rate — full 1280×720 MJPEG encode is expensive on Pi 2B;
-# 2–5 fps is enough for LAST/HUD glitches without starving detect.
-DEFAULT_WRITE_FPS = 5.0
-# Writer queue: drop when behind rather than grow unbounded.
-_QUEUE_MAXSIZE = 4
+# Full 1280×720 encode is expensive on Pi 2B; 2 fps is enough for LAST glitches.
+DEFAULT_WRITE_FPS = 2.0
+_QUEUE_MAXSIZE = 2
+_JPEG_QUALITY = 75
 
 
 @dataclass
@@ -75,7 +75,7 @@ class RecordStatus:
 
 
 class FrameRecorder:
-    """Tee full frames from the capture loop into a bounded VideoWriter file."""
+    """Tee full frames from the capture loop into a bounded video file."""
 
     def __init__(
         self,
@@ -134,11 +134,12 @@ class FrameRecorder:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        # MJPEG AVI: widely writable by OpenCV without ffmpeg encode plugins.
-        path = out_dir / f"{stamp}_card_1280x720.avi"
-        # Cap write FPS for Pi 2B; still full-frame resolution.
+        use_ffmpeg = shutil.which("ffmpeg") is not None
+        ext = "mkv" if use_ffmpeg else "avi"
+        path = out_dir / f"{stamp}_card_1280x720.{ext}"
         use_fps = float(fps) if fps is not None else self._fps
         use_fps = max(1.0, min(use_fps, DEFAULT_WRITE_FPS))
+        codec = "ffmpeg-mjpeg" if use_ffmpeg else "MJPG"
 
         with self._lock:
             self._reap_writer_unlocked()
@@ -162,7 +163,7 @@ class FrameRecorder:
                 width=int(width or 0),
                 height=int(height or 0),
                 fps=use_fps,
-                codec="MJPG",
+                codec=codec,
                 error=None,
                 finished=False,
             )
@@ -170,10 +171,9 @@ class FrameRecorder:
                 target=self._writer_loop,
                 name="frame-recorder",
                 daemon=True,
-                args=(path, secs, use_fps, int(width or 0), int(height or 0)),
+                args=(path, secs, use_fps, int(width or 0), int(height or 0), use_ffmpeg),
             )
             self._thread.start()
-            # Wall-clock auto-stop so we do not rely on capture offering frames.
             self._timer = threading.Timer(secs, self._auto_stop)
             self._timer.daemon = True
             self._timer.start()
@@ -196,7 +196,7 @@ class FrameRecorder:
         if q is not None:
             self._signal_writer_stop(q)
         if thread is not None:
-            thread.join(timeout=15.0)
+            thread.join(timeout=20.0)
         with self._lock:
             self._reap_writer_unlocked()
             self._status.recording = False
@@ -231,7 +231,6 @@ class FrameRecorder:
                 self._status.frames_dropped += 1
                 return
         try:
-            # Copy so the capture thread can replace _latest_frame next tick.
             payload = frame.copy()  # type: ignore[attr-defined]
         except AttributeError:
             return
@@ -256,7 +255,6 @@ class FrameRecorder:
                 pass
 
     def _reap_writer_unlocked(self) -> None:
-        """Clear finished writer thread bookkeeping (caller holds ``_lock``)."""
         thread = self._thread
         if thread is not None and not thread.is_alive():
             self._thread = None
@@ -271,12 +269,14 @@ class FrameRecorder:
         fps: float,
         width_hint: int,
         height_hint: int,
+        use_ffmpeg: bool,
     ) -> None:
         assert self._cv2 is not None
         cv2 = self._cv2
-        writer = None
         frames = 0
         started = time.time()
+        ffmpeg: subprocess.Popen[bytes] | None = None
+        writer = None
         try:
             while not self._stop.is_set():
                 if time.time() - started >= max_seconds:
@@ -289,7 +289,21 @@ class FrameRecorder:
                 if item is None:
                     break
                 h, w = int(item.shape[0]), int(item.shape[1])  # type: ignore[attr-defined]
-                if writer is None:
+                if use_ffmpeg and ffmpeg is None:
+                    ffmpeg = self._open_ffmpeg(path, w, h, fps)
+                    with self._lock:
+                        self._status.width = w
+                        self._status.height = h
+                        self._status.codec = "ffmpeg-mjpeg"
+                    logger.info(
+                        "Recording started (ffmpeg) path=%s %sx%s @ %.1f fps max=%.0fs",
+                        path,
+                        w,
+                        h,
+                        fps,
+                        max_seconds,
+                    )
+                elif not use_ffmpeg and writer is None:
                     fourcc = cv2.VideoWriter_fourcc(*"MJPG")
                     writer = cv2.VideoWriter(str(path), fourcc, fps, (w, h))
                     if not writer.isOpened():
@@ -299,14 +313,28 @@ class FrameRecorder:
                         self._status.height = h
                         self._status.codec = "MJPG"
                     logger.info(
-                        "Recording started path=%s %sx%s @ %.1f fps max=%.0fs",
+                        "Recording started (cv2) path=%s %sx%s @ %.1f fps max=%.0fs",
                         path,
                         w,
                         h,
                         fps,
                         max_seconds,
                     )
-                writer.write(item)
+
+                if ffmpeg is not None:
+                    ok, buf = cv2.imencode(
+                        ".jpg",
+                        item,
+                        [int(cv2.IMWRITE_JPEG_QUALITY), _JPEG_QUALITY],
+                    )
+                    if not ok:
+                        continue
+                    assert ffmpeg.stdin is not None
+                    ffmpeg.stdin.write(buf.tobytes())
+                else:
+                    assert writer is not None
+                    writer.write(item)
+
                 frames += 1
                 with self._lock:
                     self._status.frames_written = frames
@@ -315,6 +343,16 @@ class FrameRecorder:
             with self._lock:
                 self._status.error = str(exc)
         finally:
+            if ffmpeg is not None:
+                try:
+                    if ffmpeg.stdin is not None:
+                        ffmpeg.stdin.close()
+                except Exception:  # noqa: BLE001
+                    logger.debug("ffmpeg stdin close failed", exc_info=True)
+                try:
+                    ffmpeg.wait(timeout=15)
+                except Exception:  # noqa: BLE001
+                    ffmpeg.kill()
             if writer is not None:
                 try:
                     writer.release()
@@ -337,3 +375,29 @@ class FrameRecorder:
                 self._status.frames_skipped,
                 self._status.error,
             )
+
+    @staticmethod
+    def _open_ffmpeg(path: Path, width: int, height: int, fps: float) -> subprocess.Popen[bytes]:
+        # JPEG pipe → MJPEG stream (cheap on Pi; no H.264 encode).
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "image2pipe",
+            "-framerate",
+            str(fps),
+            "-i",
+            "-",
+            "-c:v",
+            "copy",
+            str(path),
+        ]
+        return subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
