@@ -6,6 +6,9 @@ import argparse
 import logging
 import signal
 import sys
+import threading
+import time
+from typing import Any
 
 import uvicorn
 
@@ -22,8 +25,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ac_telemetry")
 
+# Process-wide shutdown: SIGINT during slow startup must abort before uvicorn
+# binds, and after bind must set Server.should_exit (custom handlers replace
+# uvicorn's default KeyboardInterrupt path).
+_shutdown = threading.Event()
 
-def build(settings=None):
+
+def build(
+    settings=None,
+    *,
+    on_startup=None,
+    on_shutdown=None,
+):
     settings = settings or get_settings()
     store = SessionStore(settings.data_dir)
     store.ensure()
@@ -42,11 +55,32 @@ def build(settings=None):
         get_capture_info=lambda: capture.stats.as_dict(),
     )
 
-    app = create_app(settings, capture, store, lap_store=lap_store, detect=detect)
+    app = create_app(
+        settings,
+        capture,
+        store,
+        lap_store=lap_store,
+        detect=detect,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+    )
     return settings, capture, detect, app
 
 
+def _stop_workers(detect: DetectService, capture: CaptureService) -> None:
+    """Bounded joins so SIGINT never blocks for minutes on VideoCapture/ffmpeg."""
+    try:
+        detect.stop(timeout=2.0)
+    except Exception:  # noqa: BLE001
+        logger.debug("detect.stop during shutdown failed", exc_info=True)
+    try:
+        capture.stop(timeout=2.0, recorder_join_timeout=3.0)
+    except Exception:  # noqa: BLE001
+        logger.debug("capture.stop during shutdown failed", exc_info=True)
+
+
 def main(argv: list[str] | None = None) -> None:
+    _shutdown.clear()
     parser = argparse.ArgumentParser(description="AC Telemetry service")
     parser.add_argument(
         "--config",
@@ -90,19 +124,87 @@ def main(argv: list[str] | None = None) -> None:
     if args.port:
         settings.port = args.port
 
-    settings, capture, detect, app = build(settings)
+    # Late-bound so lifespan closures see the real instances.
+    holders: dict[str, Any] = {"capture": None, "detect": None}
 
-    def _shutdown(*_args) -> None:
-        logger.info("Shutting down…")
-        detect.stop()
-        capture.stop()
+    # uvicorn runs lifespan startup *before* binding the listen socket. Start
+    # capture only after bind so OpenCV import / VideoCapture open cannot delay
+    # (or thrash away) the listening port on a low-RAM Pi.
+    server_holder: dict[str, uvicorn.Server | None] = {"server": None}
 
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    def _on_startup() -> None:
+        def _start_after_bind() -> None:
+            deadline = time.monotonic() + 120.0
+            while time.monotonic() < deadline and not _shutdown.is_set():
+                srv = server_holder["server"]
+                if srv is not None and srv.started:
+                    break
+                time.sleep(0.05)
+            if _shutdown.is_set():
+                return
+            capture = holders["capture"]
+            detect = holders["detect"]
+            if capture is None or detect is None:
+                return
+            if not args.no_capture:
+                capture.start()
+            detect.start()
 
-    if not args.no_capture:
-        capture.start()
-    detect.start()
+        threading.Thread(
+            target=_start_after_bind, name="worker-start", daemon=True
+        ).start()
+
+    def _on_shutdown() -> None:
+        capture = holders["capture"]
+        detect = holders["detect"]
+        if capture is None or detect is None:
+            return
+        _stop_workers(detect, capture)
+
+    settings, capture, detect, app = build(
+        settings,
+        on_startup=_on_startup,
+        on_shutdown=_on_shutdown,
+    )
+    holders["capture"] = capture
+    holders["detect"] = detect
+
+    config = uvicorn.Config(
+        app,
+        host=settings.host,
+        port=settings.port,
+        log_level="info",
+    )
+    server = uvicorn.Server(config)
+    server_holder["server"] = server
+
+    def _handle_signal(signum: int, _frame: Any) -> None:
+        try:
+            name = signal.Signals(signum).name
+        except ValueError:
+            name = str(signum)
+        if _shutdown.is_set():
+            # Second Ctrl-C: do not wait on joins again.
+            logger.warning("Second %s — forcing exit", name)
+            raise SystemExit(1)
+        logger.info("Shutting down… (%s)", name)
+        _shutdown.set()
+        server.should_exit = True
+        # Never join from a signal handler: capture may be inside a long OpenCV
+        # import/open holding the GIL; blocking joins freeze Ctrl-C for minutes.
+        try:
+            detect.request_stop()
+            capture.request_stop()
+        except Exception:  # noqa: BLE001
+            logger.debug("request_stop from signal handler failed", exc_info=True)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    if _shutdown.is_set():
+        logger.info("Shutdown requested during startup; not binding HTTP")
+        _stop_workers(detect, capture)
+        return
 
     logger.info(
         "Listening on http://%s:%s (backend=%s profile=%s detect=%s)",
@@ -113,10 +215,10 @@ def main(argv: list[str] | None = None) -> None:
         settings.detect.lap_time.reader if settings.detect.enabled else "off",
     )
     try:
-        uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
+        server.run()
     finally:
-        detect.stop()
-        capture.stop()
+        _shutdown.set()
+        _stop_workers(detect, capture)
 
 
 if __name__ == "__main__":
