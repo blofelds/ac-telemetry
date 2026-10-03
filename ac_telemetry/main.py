@@ -55,9 +55,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--backend",
-        choices=("mock", "v4l2"),
+        choices=("mock", "v4l2", "file", "video"),
         default=None,
-        help="Override capture backend",
+        help="Override capture backend (video is an alias for file)",
+    )
+    parser.add_argument(
+        "--file-path",
+        default=None,
+        help="Video/image path for file|video backend",
     )
     parser.add_argument("--host", default=None, help="Bind host (default from config)")
     parser.add_argument("--port", type=int, default=None, help="Bind port")
@@ -75,7 +80,11 @@ def main(argv: list[str] | None = None) -> None:
     settings_mod.get_settings.cache_clear()
     settings = load_settings(Path(args.config) if args.config else None)
     if args.backend:
-        settings.backend = args.backend
+        from ac_telemetry.settings import normalize_backend
+
+        settings.backend = normalize_backend(args.backend)
+    if args.file_path:
+        settings.file_path = args.file_path
     if args.host:
         settings.host = args.host
     if args.port:
