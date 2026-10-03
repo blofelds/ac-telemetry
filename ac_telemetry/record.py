@@ -1,8 +1,8 @@
 """Bounded card-native frame recorder (tee from the capture thread).
 
 Writes full-resolution frames the capture loop already owns — never opens
-``/dev/video0`` itself. Pi 2B-friendly: short max duration, small drop-queue,
-MJPEG AVI by default (cheap encode).
+``/dev/video0`` itself. Pi 2B-friendly: short max duration, subsampled write
+FPS, small drop-queue, MJPEG AVI by default.
 """
 
 from __future__ import annotations
@@ -22,8 +22,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_DURATION_SECONDS = 60
 MAX_DURATION_SECONDS = 120
 MIN_DURATION_SECONDS = 1
+# Default write rate — full 1280×720 MJPEG encode is expensive on Pi 2B;
+# 2–5 fps is enough for LAST/HUD glitches without starving detect.
+DEFAULT_WRITE_FPS = 5.0
 # Writer queue: drop when behind rather than grow unbounded.
-_QUEUE_MAXSIZE = 2
+_QUEUE_MAXSIZE = 4
 
 
 @dataclass
@@ -37,6 +40,7 @@ class RecordStatus:
     max_seconds: float = 0.0
     frames_written: int = 0
     frames_dropped: int = 0
+    frames_skipped: int = 0
     width: int = 0
     height: int = 0
     fps: float = 0.0
@@ -60,6 +64,7 @@ class RecordStatus:
             "max_seconds": self.max_seconds,
             "frames_written": self.frames_written,
             "frames_dropped": self.frames_dropped,
+            "frames_skipped": self.frames_skipped,
             "width": self.width,
             "height": self.height,
             "fps": self.fps,
@@ -78,7 +83,7 @@ class FrameRecorder:
         output_dir: Path,
         default_seconds: float = DEFAULT_DURATION_SECONDS,
         max_seconds: float = MAX_DURATION_SECONDS,
-        fps: float = 10.0,
+        fps: float = DEFAULT_WRITE_FPS,
     ) -> None:
         self._output_dir = Path(output_dir)
         self._default_seconds = float(default_seconds)
@@ -88,12 +93,14 @@ class FrameRecorder:
         self._status = RecordStatus()
         self._queue: queue.Queue[object | None] | None = None
         self._thread: threading.Thread | None = None
+        self._timer: threading.Timer | None = None
         self._stop = threading.Event()
-        self._writer = None
         self._cv2 = None
+        self._next_due = 0.0
 
     def status(self) -> dict[str, Any]:
         with self._lock:
+            self._reap_writer_unlocked()
             return self._status.as_dict()
 
     def start(
@@ -129,8 +136,9 @@ class FrameRecorder:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         # MJPEG AVI: widely writable by OpenCV without ffmpeg encode plugins.
         path = out_dir / f"{stamp}_card_1280x720.avi"
+        # Cap write FPS for Pi 2B; still full-frame resolution.
         use_fps = float(fps) if fps is not None else self._fps
-        use_fps = max(1.0, min(use_fps, 30.0))
+        use_fps = max(1.0, min(use_fps, DEFAULT_WRITE_FPS))
 
         with self._lock:
             self._reap_writer_unlocked()
@@ -140,6 +148,7 @@ class FrameRecorder:
                 raise RuntimeError("Recording already in progress")
             self._cv2 = cv2
             self._stop.clear()
+            self._next_due = 0.0
             self._queue = queue.Queue(maxsize=_QUEUE_MAXSIZE)
             self._status = RecordStatus(
                 recording=True,
@@ -149,6 +158,7 @@ class FrameRecorder:
                 max_seconds=secs,
                 frames_written=0,
                 frames_dropped=0,
+                frames_skipped=0,
                 width=int(width or 0),
                 height=int(height or 0),
                 fps=use_fps,
@@ -163,11 +173,17 @@ class FrameRecorder:
                 args=(path, secs, use_fps, int(width or 0), int(height or 0)),
             )
             self._thread.start()
+            # Wall-clock auto-stop so we do not rely on capture offering frames.
+            self._timer = threading.Timer(secs, self._auto_stop)
+            self._timer.daemon = True
+            self._timer.start()
             return self._status.as_dict()
 
     def stop(self) -> dict[str, Any]:
         """Stop recording and finalize the file (idempotent)."""
         with self._lock:
+            timer = self._timer
+            self._timer = None
             thread = self._thread
             q = self._queue
             alive = thread is not None and thread.is_alive()
@@ -175,10 +191,12 @@ class FrameRecorder:
                 self._reap_writer_unlocked()
                 return self._status.as_dict()
             self._stop.set()
+        if timer is not None:
+            timer.cancel()
         if q is not None:
             self._signal_writer_stop(q)
         if thread is not None:
-            thread.join(timeout=10.0)
+            thread.join(timeout=15.0)
         with self._lock:
             self._reap_writer_unlocked()
             self._status.recording = False
@@ -189,24 +207,29 @@ class FrameRecorder:
                 )
             return self._status.as_dict()
 
+    def _auto_stop(self) -> None:
+        try:
+            self.stop()
+        except Exception:  # noqa: BLE001
+            logger.debug("Recorder auto-stop failed", exc_info=True)
+
     def offer_frame(self, frame: object | None) -> None:
         """Non-blocking tee from the capture loop. No-op when idle / mock None."""
         if frame is None:
             return
+        now = time.monotonic()
         with self._lock:
             if not self._status.recording or self._queue is None:
                 return
             q = self._queue
-            overdue = (
-                self._status.started_at is not None
-                and time.time() - self._status.started_at >= self._status.max_seconds
-            )
-            if overdue:
-                self._stop.set()
-        if self._stop.is_set():
-            # Duration hit: wake writer; it finalizes. Do not join here.
-            self._signal_writer_stop(q)
-            return
+            interval = 1.0 / max(self._status.fps, 1.0)
+            if now < self._next_due:
+                self._status.frames_skipped += 1
+                return
+            self._next_due = now + interval
+            if q.full():
+                self._status.frames_dropped += 1
+                return
         try:
             # Copy so the capture thread can replace _latest_frame next tick.
             payload = frame.copy()  # type: ignore[attr-defined]
@@ -302,15 +325,15 @@ class FrameRecorder:
                 self._status.finished = True
                 self._status.frames_written = frames
                 self._status.duration_seconds = max(0.0, time.time() - started)
-                # Keep path even if zero frames (caller can see empty/failed file).
                 if width_hint and not self._status.width:
                     self._status.width = width_hint
                 if height_hint and not self._status.height:
                     self._status.height = height_hint
             logger.info(
-                "Recording finished path=%s frames=%s dropped=%s error=%s",
+                "Recording finished path=%s frames=%s dropped=%s skipped=%s error=%s",
                 path,
                 frames,
                 self._status.frames_dropped,
+                self._status.frames_skipped,
                 self._status.error,
             )
