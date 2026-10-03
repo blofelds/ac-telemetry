@@ -126,7 +126,7 @@ curl -sS -X POST "$PI/api/debug/record/stop"
 curl -sS "$PI/api/debug/record/status"
 ```
 
-Move/copy the `.avi` from `data/recordings/` (or configured `record_dir`) into
+Move/copy the `.mjpeg` (or `.avi` fallback) from `data/recordings/` (or configured `record_dir`) into
 `~/ac-telemetry-testdata/card/` and note ground-truth LAST times.
 
 ### When runtime capture is stopped (HITL)
