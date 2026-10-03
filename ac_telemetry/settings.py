@@ -133,6 +133,11 @@ class Settings(BaseSettings):
     # Where /debug "Save glyph" writes PNG templates cut from the live ROI.
     # Prefer live Pi set (sibling to VLC ac_720p_capture); keep ACC ac_720p intact.
     glyphs_dir: Path = Path("templates/lap_time_digits/ac_720p_pi")
+    # Bounded card-native tee from the capture thread (see /api/debug/record/*).
+    # On the Pi, point this at ~/ac-telemetry-testdata/card for golden clips.
+    record_dir: Path = Path("data/recordings")
+    record_default_seconds: float = 60.0
+    record_max_seconds: float = 120.0
 
     # Filled from YAML profiles after load
     profiles: dict[str, CaptureProfile] = Field(default_factory=dict)
@@ -306,6 +311,21 @@ def load_settings(config_path: Path | None = None) -> Settings:
                     "templates/lap_time_digits/ac_720p_pi",
                 )
             )
+        ),
+        record_dir=(
+            env_settings.record_dir
+            if "AC_TELEMETRY_RECORD_DIR" in os.environ
+            else Path(data.get("record_dir", "data/recordings"))
+        ),
+        record_default_seconds=(
+            env_settings.record_default_seconds
+            if "AC_TELEMETRY_RECORD_DEFAULT_SECONDS" in os.environ
+            else float(data.get("record_default_seconds", 60.0))
+        ),
+        record_max_seconds=(
+            env_settings.record_max_seconds
+            if "AC_TELEMETRY_RECORD_MAX_SECONDS" in os.environ
+            else float(data.get("record_max_seconds", 120.0))
         ),
         profiles=profiles,
         rois=rois,
