@@ -1,0 +1,73 @@
+# Sandbox HITL config: file/video source on port 8742.
+# Does NOT open /dev/video0 — safe alongside runtime on :8741.
+#
+# From the Pi sandbox worktree:
+#   ~/ac-telemetry/.venv/bin/ac-telemetry --config config/sandbox_file.yaml
+# Or override the clip:
+#   AC_TELEMETRY_FILE_PATH=/path/to/clip.mp4 \
+#     ~/ac-telemetry/.venv/bin/ac-telemetry --config config/sandbox_file.yaml
+#
+# Generate a smoke clip if testdata is empty (see docs / HITL playbook).
+
+profiles:
+  pi2b:
+    width: 1280
+    height: 720
+    fps: 10
+    max_width: 1280
+    max_height: 720
+    max_fps: 15
+  pi5:
+    width: 1920
+    height: 1080
+    fps: 30
+    max_width: 1920
+    max_height: 1080
+    max_fps: 60
+
+profile: pi2b
+
+# Equivalent nested form also accepted:
+#   capture:
+#     source: file
+#     file_path: …
+#     loop: true
+backend: file
+file_path: /home/user1/ac-telemetry-testdata/sandbox_smoke_1280x720.mp4
+loop: true
+
+# Keep device key harmless; file backend ignores it (never opens video0).
+device: /dev/video0
+prefer_mjpeg: true
+
+host: "0.0.0.0"
+port: 8742
+
+data_dir: data/sessions
+glyphs_dir: templates/lap_time_digits/ac_720p_pi
+
+rois:
+  lap_time:
+    x: 92
+    y: 287
+    width: 84
+    height: 17
+
+detect:
+  enabled: true
+  fps: 2.0
+  debounce_reads: 2
+  drop_under_pressure: true
+  debug_dump:
+    enabled: true
+    on_success: false
+    every_n_failures: 1
+    include_full_frame: false
+  lap_time:
+    reader: template
+    mode: last_lap
+    mock_interval_seconds: 45
+    min_lap_ms: 30000
+    reset_slack_ms: 5000
+    templates_dir: templates/lap_time_digits/ac_720p_pi
+    match_threshold: 0.50
