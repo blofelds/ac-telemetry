@@ -24,14 +24,19 @@ profiles:
 # Active profile name (pi2b | pi5)
 profile: pi2b
 
-# Capture backend: v4l2 | mock
+# Capture backend: v4l2 | mock | file (alias: video)
 # Default is v4l2 for the Pi + HDMI dongle. Use mock on a laptop / CI:
 #   ac-telemetry --backend mock
 #   or AC_TELEMETRY_BACKEND=mock
+# Sandbox HITL (no /dev/video0): config/sandbox_file.yaml (port 8742).
 backend: v4l2
 
-# V4L2 device path (ignored by mock)
+# V4L2 device path (ignored by mock / file)
 device: /dev/video0
+
+# file | video backend only (ignored by mock / v4l2). See config/sandbox_file.yaml.
+# file_path: /home/user1/ac-telemetry-testdata/sandbox_smoke_1280x720.mp4
+# loop: true
 
 # Prefer MJPEG FourCC on UVC devices (cheaper on USB2 / Pi 2B than raw YUYV).
 prefer_mjpeg: true

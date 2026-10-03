@@ -15,10 +15,20 @@ import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BackendName = Literal["mock", "v4l2"]
+BackendName = Literal["mock", "v4l2", "file", "video"]
 ProfileName = Literal["pi2b", "pi5"]
 LapTimeReaderName = Literal["mock", "tesseract", "template", "assetto_corsa"]
 LapTimeMode = Literal["last_lap", "current_timer"]
+
+
+def normalize_backend(name: str) -> BackendName:
+    """Map aliases; ``video`` is the same OpenCV file path backend as ``file``."""
+    key = (name or "").strip().lower()
+    if key == "video":
+        return "file"
+    if key in ("mock", "v4l2", "file"):
+        return key  # type: ignore[return-value]
+    raise ValueError(f"Unknown capture backend: {name!r}")
 
 
 class CaptureProfile(BaseModel):
@@ -112,6 +122,11 @@ class Settings(BaseSettings):
     device: str = "/dev/video0"
     # Prefer MJPEG on UVC devices (lower USB/CPU than raw YUYV on Pi 2B).
     prefer_mjpeg: bool = True
+    # file / video backend: path to a clip, single image, or OpenCV image-sequence
+    # pattern (e.g. /path/frame_%04d.png). Ignored by mock / v4l2.
+    file_path: str = ""
+    # When True, rewind (or re-open) at EOF so sandbox can run indefinitely.
+    loop: bool = True
     host: str = "0.0.0.0"
     port: int = 8741
     data_dir: Path = Path("data/sessions")
@@ -242,15 +257,39 @@ def load_settings(config_path: Path | None = None) -> Settings:
 
     # Env overrides via pydantic for scalar fields; re-apply after YAML base.
     env_settings = Settings()
+    # Accept either top-level backend or nested capture.source (HITL sandbox docs).
+    capture_block = data.get("capture") if isinstance(data.get("capture"), dict) else {}
+    raw_backend = (
+        env_settings.backend
+        if "AC_TELEMETRY_BACKEND" in os.environ
+        else data.get("backend")
+        or capture_block.get("source")
+        or "v4l2"
+    )
+    backend = normalize_backend(str(raw_backend))
+    raw_file_path = (
+        env_settings.file_path
+        if "AC_TELEMETRY_FILE_PATH" in os.environ
+        else data.get("file_path")
+        or capture_block.get("file_path")
+        or ""
+    )
+    raw_loop = (
+        env_settings.loop
+        if "AC_TELEMETRY_LOOP" in os.environ
+        else data.get("loop", capture_block.get("loop", True))
+    )
     return Settings(
         profile=env_settings.profile if "AC_TELEMETRY_PROFILE" in os.environ else data.get("profile", "pi2b"),
-        backend=env_settings.backend if "AC_TELEMETRY_BACKEND" in os.environ else data.get("backend", "v4l2"),
+        backend=backend,
         device=env_settings.device if "AC_TELEMETRY_DEVICE" in os.environ else data.get("device", "/dev/video0"),
         prefer_mjpeg=(
             env_settings.prefer_mjpeg
             if "AC_TELEMETRY_PREFER_MJPEG" in os.environ
             else bool(data.get("prefer_mjpeg", True))
         ),
+        file_path=str(raw_file_path or ""),
+        loop=bool(raw_loop),
         host=env_settings.host if "AC_TELEMETRY_HOST" in os.environ else data.get("host", "0.0.0.0"),
         port=env_settings.port if "AC_TELEMETRY_PORT" in os.environ else int(data.get("port", 8741)),
         data_dir=(

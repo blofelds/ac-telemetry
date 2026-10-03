@@ -1,4 +1,4 @@
-"""Frame capture backends: mock (dev) and V4L2/OpenCV (Pi hardware)."""
+"""Frame capture backends: mock, V4L2/OpenCV, and file/video path."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Protocol
 
-from ac_telemetry.settings import CaptureProfile, Settings
+from ac_telemetry.settings import CaptureProfile, Settings, normalize_backend
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ class MockFrameSource:
         self._opened = False
 
 
-def _v4l2_cv2_import_failure(exc: ImportError) -> RuntimeError:
+def _cv2_import_failure(exc: ImportError, *, backend: str = "v4l2") -> RuntimeError:
     """Map a cv2 ImportError to a RuntimeError that keeps the real cause visible.
 
     On Raspberry Pi OS, pip numpy/opencv often fail with missing libopenblas.so.0.
@@ -109,7 +110,7 @@ def _v4l2_cv2_import_failure(exc: ImportError) -> RuntimeError:
     )
     if missing_cv2:
         return RuntimeError(
-            "OpenCV (cv2) is required for the v4l2 backend. On Raspberry Pi 2B "
+            f"OpenCV (cv2) is required for the {backend} backend. On Raspberry Pi 2B "
             "prefer: sudo apt install python3-opencv && python3 -m venv "
             "--system-site-packages .venv — do not pip install '.[capture]' "
             "(wheels often SIGILL on the 2B). On x86: pip install -e '.[capture]'. "
@@ -131,8 +132,13 @@ def _v4l2_cv2_import_failure(exc: ImportError) -> RuntimeError:
             "Re-check with: python -c 'import numpy; import cv2'."
         )
     return RuntimeError(
-        f"OpenCV failed to import for the v4l2 backend: {detail}"
+        f"OpenCV failed to import for the {backend} backend: {detail}"
     )
+
+
+def _v4l2_cv2_import_failure(exc: ImportError) -> RuntimeError:
+    """Backward-compatible wrapper used by v4l2 import-error tests."""
+    return _cv2_import_failure(exc, backend="v4l2")
 
 
 class V4L2FrameSource:
@@ -205,14 +211,110 @@ class V4L2FrameSource:
             self._cap = None
 
 
+class FileFrameSource:
+    """OpenCV ``VideoCapture`` on a video file, image, or image-sequence path.
+
+    Sandbox / HITL use: feed recorded clips without opening ``/dev/video0``.
+    ``loop=True`` rewinds (or re-opens) at EOF so the server can run indefinitely.
+    """
+
+    def __init__(
+        self,
+        path: str,
+        profile: CaptureProfile,
+        *,
+        loop: bool = True,
+    ) -> None:
+        self._path = path
+        self._profile = profile
+        self._loop = loop
+        self._cap = None
+        self._cv2 = None
+
+    def _resolved_path(self) -> str:
+        raw = (self._path or "").strip()
+        if not raw:
+            raise RuntimeError(
+                "file backend requires file_path (YAML file_path / "
+                "capture.file_path, or AC_TELEMETRY_FILE_PATH)"
+            )
+        # printf image sequences keep "%" literals; expanduser only.
+        expanded = str(Path(raw).expanduser())
+        if "%" not in expanded and not Path(expanded).exists():
+            raise RuntimeError(f"Capture file not found: {expanded}")
+        return expanded
+
+    def _open_capture(self, path: str):
+        assert self._cv2 is not None
+        cap = self._cv2.VideoCapture(path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Failed to open capture file: {path}")
+        return cap
+
+    def open(self) -> tuple[int, int]:
+        try:
+            import cv2  # lazy: optional until file path is used
+        except ImportError as exc:
+            raise _cv2_import_failure(exc, backend="file") from exc
+
+        self._cv2 = cv2
+        path = self._resolved_path()
+        cap = self._open_capture(path)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or self._profile.width)
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or self._profile.height)
+        if width <= 0:
+            width = self._profile.width
+        if height <= 0:
+            height = self._profile.height
+        self._cap = cap
+        return width, height
+
+    def read(self) -> tuple[bool, object | None]:
+        if self._cap is None or self._cv2 is None:
+            return False, None
+        ok, frame = self._cap.read()
+        if ok:
+            return True, frame
+        if not self._loop:
+            return False, None
+        # Seek first (cheap for most containers); re-open if seek fails
+        # (common for single-image / some image-sequence backends).
+        if self._cap.set(self._cv2.CAP_PROP_POS_FRAMES, 0):
+            ok, frame = self._cap.read()
+            if ok:
+                return True, frame
+        try:
+            self._cap.release()
+        except Exception:  # noqa: BLE001
+            logger.debug("Error releasing capture before loop re-open", exc_info=True)
+        path = self._resolved_path()
+        self._cap = self._open_capture(path)
+        ok, frame = self._cap.read()
+        if not ok:
+            return False, None
+        return True, frame
+
+    def close(self) -> None:
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+
+
 def build_source(settings: Settings, profile: CaptureProfile) -> FrameSource:
-    if settings.backend == "mock":
+    backend = normalize_backend(settings.backend)
+    if backend == "mock":
         return MockFrameSource(profile)
-    if settings.backend == "v4l2":
+    if backend == "v4l2":
         return V4L2FrameSource(
             settings.device,
             profile,
             prefer_mjpeg=settings.prefer_mjpeg,
+        )
+    if backend == "file":
+        return FileFrameSource(
+            settings.file_path,
+            profile,
+            loop=settings.loop,
         )
     raise ValueError(f"Unknown capture backend: {settings.backend!r}")
 
@@ -278,11 +380,15 @@ class CaptureService:
 
     def _run(self) -> None:
         profile = self.settings.active_profile()
+        backend = normalize_backend(self.settings.backend)
         source = build_source(self.settings, profile)
-        self.stats.backend = self.settings.backend
-        self.stats.device = (
-            "mock" if self.settings.backend == "mock" else self.settings.device
-        )
+        self.stats.backend = backend
+        if backend == "mock":
+            self.stats.device = "mock"
+        elif backend == "file":
+            self.stats.device = self.settings.file_path or "file"
+        else:
+            self.stats.device = self.settings.device
         self.stats.profile = profile.name
         self.stats.target_fps = profile.fps
         self.stats.width = profile.width
@@ -305,7 +411,7 @@ class CaptureService:
                 self.stats.session_id = session_id
             logger.info(
                 "Capture started backend=%s profile=%s %sx%s @ %.1f fps",
-                self.settings.backend,
+                backend,
                 profile.name,
                 width,
                 height,
