@@ -46,6 +46,11 @@ port: 8742
 data_dir: data/sessions
 glyphs_dir: templates/lap_time_digits/ac_720p_pi
 
+# Sandbox recordings (file source proof); runtime can override to testdata/card.
+record_dir: data/recordings
+record_default_seconds: 30
+record_max_seconds: 120
+
 rois:
   lap_time:
     x: 92

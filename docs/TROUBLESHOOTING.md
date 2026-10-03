@@ -136,4 +136,24 @@ echo "Bundle: $BUNDLE.zip"
 - Decision tree (mask empty vs low scores vs separators): see the lap-detect
   debug plan in project Context / ask the coordinating agent.
 
+### Duplicate / skipped laps (same LAST re-read as new)
+
+Symptom examples: ~12 laps logged for 7 driven; one lap skipped; the same LAST
+string (e.g. `2:21.900` / `2:21.500`) repeating while you are still on one lap.
+
+1. **Start in-app card-native video** before the suspect stint (does not steal video0):
+   ```bash
+   PI="${PI:-http://127.0.0.1:8741}"
+   curl -sS -X POST "$PI/api/debug/record/start" \
+     -H 'Content-Type: application/json' \
+     -d '{"duration_seconds":90,"output_dir":"'"$HOME"'/ac-telemetry-testdata/card"}'
+   ```
+2. When the glitch happens, **curl detect dumps + status** (same commands as above).
+3. `POST $PI/api/debug/record/stop` (or wait for auto-stop). Confirm with
+   `GET $PI/api/debug/record/status` — file should be 1280×720.
+4. Do **not** open `/dev/video0` with ffmpeg while runtime is capturing. If you
+   must use ffmpeg, stop the service first and run `scripts/record-card-native.sh`.
+
+PS5 share → downscale clips are **not** ROI-accurate for this class of bug.
+
 - Collect: `GET /health` JSON, `GET /api/laps/current`, last 50 log lines, `v4l2-ctl --list-devices` output (if hardware), and whether mock works on the same host.
