@@ -409,13 +409,23 @@ class CaptureService:
             )
             self._thread.start()
 
+    def request_stop(self) -> None:
+        """Non-blocking stop signal (safe from a SIGINT handler)."""
+        self._stop.set()
+        if self.recorder is not None:
+            try:
+                # Wake writer without joining (join belongs outside the handler).
+                self.recorder.request_stop()
+            except Exception:  # noqa: BLE001
+                logger.debug("Recorder request_stop failed", exc_info=True)
+
     def stop(
         self,
         timeout: float = 5.0,
         *,
         recorder_join_timeout: float = 5.0,
     ) -> None:
-        self._stop.set()
+        self.request_stop()
         thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout)

@@ -190,7 +190,13 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Shutting down… (%s)", name)
         _shutdown.set()
         server.should_exit = True
-        _stop_workers(detect, capture)
+        # Never join from a signal handler: capture may be inside a long OpenCV
+        # import/open holding the GIL; blocking joins freeze Ctrl-C for minutes.
+        try:
+            detect.request_stop()
+            capture.request_stop()
+        except Exception:  # noqa: BLE001
+            logger.debug("request_stop from signal handler failed", exc_info=True)
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
