@@ -1,8 +1,10 @@
 """Bounded card-native frame recorder (tee from the capture thread).
 
 Writes full-resolution frames the capture loop already owns — never opens
-``/dev/video0`` itself. Pi 2B-friendly: short max duration, subsampled write
-FPS, JPEG→ffmpeg pipe (fallback: OpenCV MJPEG VideoWriter).
+``/dev/video0`` itself.
+
+Pi 2B path: JPEG sequence while recording (cheap), then a short ffmpeg mux on
+stop. Fallback: OpenCV MJPEG VideoWriter when ffmpeg is missing.
 """
 
 from __future__ import annotations
@@ -23,7 +25,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_DURATION_SECONDS = 60
 MAX_DURATION_SECONDS = 120
 MIN_DURATION_SECONDS = 1
-# Full 1280×720 encode is expensive on Pi 2B; 2 fps is enough for LAST glitches.
 DEFAULT_WRITE_FPS = 2.0
 _QUEUE_MAXSIZE = 2
 _JPEG_QUALITY = 75
@@ -135,11 +136,14 @@ class FrameRecorder:
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         use_ffmpeg = shutil.which("ffmpeg") is not None
-        ext = "mkv" if use_ffmpeg else "avi"
-        path = out_dir / f"{stamp}_card_1280x720.{ext}"
+        # Final container after mux (or AVI if ffmpeg missing).
+        path = out_dir / (
+            f"{stamp}_card_1280x720.mjpeg" if use_ffmpeg else f"{stamp}_card_1280x720.avi"
+        )
+        frames_dir = out_dir / f".{stamp}_frames"
         use_fps = float(fps) if fps is not None else self._fps
         use_fps = max(1.0, min(use_fps, DEFAULT_WRITE_FPS))
-        codec = "ffmpeg-mjpeg" if use_ffmpeg else "MJPG"
+        codec = "jpeg-seq+ffmpeg" if use_ffmpeg else "MJPG"
 
         with self._lock:
             self._reap_writer_unlocked()
@@ -171,7 +175,15 @@ class FrameRecorder:
                 target=self._writer_loop,
                 name="frame-recorder",
                 daemon=True,
-                args=(path, secs, use_fps, int(width or 0), int(height or 0), use_ffmpeg),
+                args=(
+                    path,
+                    frames_dir,
+                    secs,
+                    use_fps,
+                    int(width or 0),
+                    int(height or 0),
+                    use_ffmpeg,
+                ),
             )
             self._thread.start()
             self._timer = threading.Timer(secs, self._auto_stop)
@@ -196,7 +208,7 @@ class FrameRecorder:
         if q is not None:
             self._signal_writer_stop(q)
         if thread is not None:
-            thread.join(timeout=20.0)
+            thread.join(timeout=30.0)
         with self._lock:
             self._reap_writer_unlocked()
             self._status.recording = False
@@ -265,6 +277,7 @@ class FrameRecorder:
     def _writer_loop(
         self,
         path: Path,
+        frames_dir: Path,
         max_seconds: float,
         fps: float,
         width_hint: int,
@@ -275,9 +288,12 @@ class FrameRecorder:
         cv2 = self._cv2
         frames = 0
         started = time.time()
-        ffmpeg: subprocess.Popen[bytes] | None = None
         writer = None
+        width = width_hint
+        height = height_hint
         try:
+            if use_ffmpeg:
+                frames_dir.mkdir(parents=True, exist_ok=True)
             while not self._stop.is_set():
                 if time.time() - started >= max_seconds:
                     break
@@ -289,84 +305,70 @@ class FrameRecorder:
                 if item is None:
                     break
                 h, w = int(item.shape[0]), int(item.shape[1])  # type: ignore[attr-defined]
-                if use_ffmpeg and ffmpeg is None:
-                    ffmpeg = self._open_ffmpeg(path, w, h, fps)
+                width, height = w, h
+                if frames == 0:
                     with self._lock:
                         self._status.width = w
                         self._status.height = h
-                        self._status.codec = "ffmpeg-mjpeg"
                     logger.info(
-                        "Recording started (ffmpeg) path=%s %sx%s @ %.1f fps max=%.0fs",
+                        "Recording started path=%s %sx%s @ %.1f fps max=%.0fs mode=%s",
                         path,
                         w,
                         h,
                         fps,
                         max_seconds,
-                    )
-                elif not use_ffmpeg and writer is None:
-                    fourcc = cv2.VideoWriter_fourcc(*"MJPG")
-                    writer = cv2.VideoWriter(str(path), fourcc, fps, (w, h))
-                    if not writer.isOpened():
-                        raise RuntimeError(f"Failed to open VideoWriter at {path}")
-                    with self._lock:
-                        self._status.width = w
-                        self._status.height = h
-                        self._status.codec = "MJPG"
-                    logger.info(
-                        "Recording started (cv2) path=%s %sx%s @ %.1f fps max=%.0fs",
-                        path,
-                        w,
-                        h,
-                        fps,
-                        max_seconds,
+                        "jpeg-seq" if use_ffmpeg else "cv2",
                     )
 
-                if ffmpeg is not None:
-                    ok, buf = cv2.imencode(
-                        ".jpg",
+                if use_ffmpeg:
+                    jpg_path = frames_dir / f"{frames + 1:06d}.jpg"
+                    ok = cv2.imwrite(
+                        str(jpg_path),
                         item,
                         [int(cv2.IMWRITE_JPEG_QUALITY), _JPEG_QUALITY],
                     )
                     if not ok:
                         continue
-                    assert ffmpeg.stdin is not None
-                    ffmpeg.stdin.write(buf.tobytes())
                 else:
-                    assert writer is not None
+                    if writer is None:
+                        fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+                        writer = cv2.VideoWriter(str(path), fourcc, fps, (w, h))
+                        if not writer.isOpened():
+                            raise RuntimeError(f"Failed to open VideoWriter at {path}")
                     writer.write(item)
 
                 frames += 1
                 with self._lock:
                     self._status.frames_written = frames
+                    self._status.width = width
+                    self._status.height = height
         except Exception as exc:  # noqa: BLE001
             logger.exception("Recorder writer failed: %s", exc)
             with self._lock:
                 self._status.error = str(exc)
         finally:
-            if ffmpeg is not None:
-                try:
-                    if ffmpeg.stdin is not None:
-                        ffmpeg.stdin.close()
-                except Exception:  # noqa: BLE001
-                    logger.debug("ffmpeg stdin close failed", exc_info=True)
-                try:
-                    ffmpeg.wait(timeout=15)
-                except Exception:  # noqa: BLE001
-                    ffmpeg.kill()
             if writer is not None:
                 try:
                     writer.release()
                 except Exception:  # noqa: BLE001
                     logger.debug("VideoWriter release failed", exc_info=True)
+            mux_error: str | None = None
+            if use_ffmpeg and frames > 0:
+                mux_error = self._mux_jpeg_sequence(frames_dir, path, fps)
+            elif use_ffmpeg and frames == 0:
+                mux_error = "no frames captured"
+            self._cleanup_frames_dir(frames_dir)
             with self._lock:
                 self._status.recording = False
                 self._status.finished = True
                 self._status.frames_written = frames
                 self._status.duration_seconds = max(0.0, time.time() - started)
-                if width_hint and not self._status.width:
-                    self._status.width = width_hint
-                if height_hint and not self._status.height:
-                    self._status.height = height_hint
+                if width and not self._status.width:
+                    self._status.width = width
+                if height and not self._status.height:
+                    self._status.height = height
+                if mux_error and not self._status.error:
+                    self._status.error = mux_error
             logger.info(
                 "Recording finished path=%s frames=%s dropped=%s skipped=%s error=%s",
                 path,
@@ -377,27 +379,47 @@ class FrameRecorder:
             )
 
     @staticmethod
-    def _open_ffmpeg(path: Path, width: int, height: int, fps: float) -> subprocess.Popen[bytes]:
-        # JPEG pipe → MJPEG stream (cheap on Pi; no H.264 encode).
+    def _mux_jpeg_sequence(frames_dir: Path, path: Path, fps: float) -> str | None:
+        pattern = str(frames_dir / "%06d.jpg")
         cmd = [
             "ffmpeg",
             "-hide_banner",
             "-loglevel",
             "error",
             "-y",
-            "-f",
-            "image2pipe",
             "-framerate",
             str(fps),
             "-i",
-            "-",
+            pattern,
             "-c:v",
             "copy",
             str(path),
         ]
-        return subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"ffmpeg mux failed: {exc}"
+        if proc.returncode != 0 or not path.is_file():
+            detail = (proc.stderr or proc.stdout or "").strip()
+            return f"ffmpeg mux failed rc={proc.returncode}: {detail[:300]}"
+        return None
+
+    @staticmethod
+    def _cleanup_frames_dir(frames_dir: Path) -> None:
+        if not frames_dir.exists():
+            return
+        try:
+            for child in frames_dir.iterdir():
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
+            frames_dir.rmdir()
+        except OSError:
+            logger.debug("Could not remove frames dir %s", frames_dir, exc_info=True)
