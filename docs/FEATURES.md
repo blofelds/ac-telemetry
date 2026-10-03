@@ -45,6 +45,12 @@ Honest inventory of what ships now versus what is planned.
 
 - `deploy/ac-telemetry.service` — systemd unit outline for headless Pi.
 
+### Card-native debug recording (bounded)
+
+- In-app tee: `POST /api/debug/record/start|stop`, `GET /api/debug/record/status` — writes full capture frames (same numpy frames the detect thread sees) under `record_dir` (default `data/recordings/`, max 120s). Does **not** open a second `/dev/video0`.
+- Offline helper: `scripts/record-card-native.sh` (ffmpeg) — **only when runtime capture is stopped** (HITL gate).
+- Prefer clips under `~/ac-telemetry-testdata/card/` for ROI-accurate sandbox replays.
+
 ## Not yet
 
 | Area | Status |
@@ -54,7 +60,7 @@ Honest inventory of what ships now versus what is planned.
 | Grafana starter | Later |
 | SQLite | Later |
 | Tailscale / auth | Later |
-| Continuous video recording | Non-goal |
+| Continuous / always-on video recording | Non-goal (bounded debug tee only) |
 
 ## Why this order
 

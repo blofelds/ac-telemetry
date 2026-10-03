@@ -42,6 +42,21 @@ class GlyphSaveRequest(BaseModel):
     height: int | None = Field(default=None, ge=1)
 
 
+class RecordStartRequest(BaseModel):
+    """Start a bounded card-native tee from frames the capture thread owns."""
+
+    duration_seconds: float | None = Field(
+        default=None,
+        ge=1,
+        description="Wall-clock seconds to record (enforced by record_max_seconds).",
+    )
+    output_dir: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Override record_dir for this clip only.",
+    )
+
+
 def create_app(
     settings: Settings,
     capture: CaptureService,
@@ -297,6 +312,55 @@ def create_app(
             "glyphs_dir": str(settings.glyphs_dir),
             **result,
         }
+
+    def _recorder():
+        rec = capture.recorder
+        if rec is None:
+            raise HTTPException(status_code=503, detail="Frame recorder not configured")
+        return rec
+
+    @app.get("/api/debug/record/status")
+    def api_debug_record_status() -> dict[str, Any]:
+        """Status of the in-app card-native frame tee."""
+        rec = _recorder()
+        payload = rec.status()
+        payload["record_dir"] = str(settings.record_dir)
+        payload["record_default_seconds"] = settings.record_default_seconds
+        payload["record_max_seconds"] = settings.record_max_seconds
+        return payload
+
+    @app.post("/api/debug/record/start")
+    def api_debug_record_start(body: RecordStartRequest | None = None) -> dict[str, Any]:
+        """Tee full capture frames to disk for a bounded duration (Pi 2B-safe).
+
+        Uses frames the capture thread already owns — does **not** open
+        ``/dev/video0``. Prefer this while the runtime is live; use
+        ``scripts/record-card-native.sh`` only when capture is stopped.
+        """
+        rec = _recorder()
+        body = body or RecordStartRequest()
+        try:
+            status = rec.start(
+                duration_seconds=body.duration_seconds,
+                output_dir=body.output_dir,
+            width=capture.stats.width,
+            height=capture.stats.height,
+            # Prefer write FPS (≤2), not capture target — Pi 2B encode budget.
+            fps=None,
+        )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            # Busy / missing OpenCV.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ok": True, **status}
+
+    @app.post("/api/debug/record/stop")
+    def api_debug_record_stop() -> dict[str, Any]:
+        """Stop the in-app tee early and finalize the file."""
+        rec = _recorder()
+        status = rec.stop()
+        return {"ok": True, **status}
 
     @app.get("/health")
     def health() -> dict:
