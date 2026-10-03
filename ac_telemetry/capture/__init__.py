@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -13,6 +14,10 @@ from ac_telemetry.record import FrameRecorder
 from ac_telemetry.settings import CaptureProfile, Settings, normalize_backend
 
 logger = logging.getLogger(__name__)
+
+_VIDEO_DEV_RE = re.compile(r"/dev/video(\d+)$")
+# Default open budget when settings omit capture_open_timeout_seconds.
+DEFAULT_CAPTURE_OPEN_TIMEOUT_SECONDS = 15.0
 
 
 @dataclass
@@ -142,6 +147,21 @@ def _v4l2_cv2_import_failure(exc: ImportError) -> RuntimeError:
     return _cv2_import_failure(exc, backend="v4l2")
 
 
+def _v4l2_source_arg(device: str) -> str | int:
+    """Map ``/dev/videoN`` or digit strings to an OpenCV V4L2 index.
+
+    Many Debian/Pi OpenCV builds reject capture-by-name for CAP_V4L2 and then
+    fall through to GStreamer, which also cannot open ``/dev/video0`` as a URI.
+    """
+    raw = (device or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    match = _VIDEO_DEV_RE.fullmatch(raw)
+    if match:
+        return int(match.group(1))
+    return raw
+
+
 class V4L2FrameSource:
     """OpenCV VideoCapture on a V4L2 UVC device."""
 
@@ -163,8 +183,7 @@ class V4L2FrameSource:
         except ImportError as exc:
             raise _v4l2_cv2_import_failure(exc) from exc
 
-        # Prefer device path; fall back to numeric index if given as digit.
-        src: str | int = int(self._device) if self._device.isdigit() else self._device
+        src = _v4l2_source_arg(self._device)
         cap = cv2.VideoCapture(src, cv2.CAP_V4L2)
         if not cap.isOpened():
             # Some stacks ignore CAP_V4L2; retry default backend.
@@ -390,16 +409,63 @@ class CaptureService:
             )
             self._thread.start()
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(
+        self,
+        timeout: float = 5.0,
+        *,
+        recorder_join_timeout: float = 5.0,
+    ) -> None:
         self._stop.set()
         thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout)
         if self.recorder is not None:
             try:
-                self.recorder.stop()
+                self.recorder.stop(join_timeout=recorder_join_timeout)
             except Exception:  # noqa: BLE001
                 logger.debug("Recorder stop during capture shutdown failed", exc_info=True)
+
+    def _open_timeout_seconds(self) -> float:
+        raw = getattr(
+            self.settings,
+            "capture_open_timeout_seconds",
+            DEFAULT_CAPTURE_OPEN_TIMEOUT_SECONDS,
+        )
+        try:
+            return max(1.0, float(raw))
+        except (TypeError, ValueError):
+            return DEFAULT_CAPTURE_OPEN_TIMEOUT_SECONDS
+
+    def _open_source(self, source: FrameSource) -> tuple[int, int]:
+        """Open capture off-thread with a deadline (V4L2/file can block for minutes)."""
+        timeout = self._open_timeout_seconds()
+        box: dict[str, object] = {}
+
+        def _target() -> None:
+            try:
+                box["wh"] = source.open()
+            except BaseException as exc:  # noqa: BLE001 — marshal to joiner
+                box["exc"] = exc
+
+        opener = threading.Thread(target=_target, name="capture-open", daemon=True)
+        opener.start()
+        opener.join(timeout=timeout)
+        if opener.is_alive():
+            # Best-effort: release may unblock a stuck VideoCapture.open.
+            closer = threading.Thread(
+                target=source.close, name="capture-open-cancel", daemon=True
+            )
+            closer.start()
+            raise TimeoutError(
+                f"Capture open timed out after {timeout:.0f}s "
+                f"(backend={normalize_backend(self.settings.backend)})"
+            )
+        if "exc" in box:
+            raise box["exc"]  # type: ignore[misc]
+        wh = box.get("wh")
+        if not isinstance(wh, tuple) or len(wh) != 2:
+            raise RuntimeError("Capture open returned no dimensions")
+        return int(wh[0]), int(wh[1])
 
     def _run(self) -> None:
         profile = self.settings.active_profile()
@@ -424,7 +490,11 @@ class CaptureService:
 
         session_id: str | None = None
         try:
-            width, height = source.open()
+            if self._stop.is_set():
+                return
+            width, height = self._open_source(source)
+            if self._stop.is_set():
+                return
             self.stats.width = width
             self.stats.height = height
             self.stats.running = True

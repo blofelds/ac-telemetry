@@ -6,6 +6,8 @@ import argparse
 import logging
 import signal
 import sys
+import threading
+from typing import Any
 
 import uvicorn
 
@@ -21,6 +23,11 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 logger = logging.getLogger("ac_telemetry")
+
+# Process-wide shutdown: SIGINT during slow startup must abort before uvicorn
+# binds, and after bind must set Server.should_exit (custom handlers replace
+# uvicorn's default KeyboardInterrupt path).
+_shutdown = threading.Event()
 
 
 def build(settings=None):
@@ -46,7 +53,20 @@ def build(settings=None):
     return settings, capture, detect, app
 
 
+def _stop_workers(detect: DetectService, capture: CaptureService) -> None:
+    """Bounded joins so SIGINT never blocks for minutes on VideoCapture/ffmpeg."""
+    try:
+        detect.stop(timeout=2.0)
+    except Exception:  # noqa: BLE001
+        logger.debug("detect.stop during shutdown failed", exc_info=True)
+    try:
+        capture.stop(timeout=2.0, recorder_join_timeout=3.0)
+    except Exception:  # noqa: BLE001
+        logger.debug("capture.stop during shutdown failed", exc_info=True)
+
+
 def main(argv: list[str] | None = None) -> None:
+    _shutdown.clear()
     parser = argparse.ArgumentParser(description="AC Telemetry service")
     parser.add_argument(
         "--config",
@@ -92,17 +112,44 @@ def main(argv: list[str] | None = None) -> None:
 
     settings, capture, detect, app = build(settings)
 
-    def _shutdown(*_args) -> None:
-        logger.info("Shutting down…")
-        detect.stop()
-        capture.stop()
+    config = uvicorn.Config(
+        app,
+        host=settings.host,
+        port=settings.port,
+        log_level="info",
+    )
+    server = uvicorn.Server(config)
 
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    def _handle_signal(signum: int, _frame: Any) -> None:
+        try:
+            name = signal.Signals(signum).name
+        except ValueError:
+            name = str(signum)
+        if _shutdown.is_set():
+            # Second Ctrl-C: do not wait on joins again.
+            logger.warning("Second %s — forcing exit", name)
+            raise SystemExit(1)
+        logger.info("Shutting down… (%s)", name)
+        _shutdown.set()
+        server.should_exit = True
+        _stop_workers(detect, capture)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    if _shutdown.is_set():
+        logger.info("Shutdown requested during startup; not binding HTTP")
+        _stop_workers(detect, capture)
+        return
 
     if not args.no_capture:
         capture.start()
     detect.start()
+
+    if _shutdown.is_set():
+        logger.info("Shutdown requested before listen; exiting")
+        _stop_workers(detect, capture)
+        return
 
     logger.info(
         "Listening on http://%s:%s (backend=%s profile=%s detect=%s)",
@@ -113,10 +160,10 @@ def main(argv: list[str] | None = None) -> None:
         settings.detect.lap_time.reader if settings.detect.enabled else "off",
     )
     try:
-        uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
+        server.run()
     finally:
-        detect.stop()
-        capture.stop()
+        _shutdown.set()
+        _stop_workers(detect, capture)
 
 
 if __name__ == "__main__":
