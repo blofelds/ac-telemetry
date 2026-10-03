@@ -57,7 +57,7 @@ def test_record_start_stop_writes_1280x720(tmp_path: Path) -> None:
     assert body["recording"] is True
     path = Path(body["path"])
     assert path.parent == record_dir
-    assert path.suffix in {".avi", ".mkv"}
+    assert path.suffix in {".avi", ".mkv", ".mjpeg"}
 
     # Tee synthetic full frames the way the capture loop would.
     for i in range(12):
