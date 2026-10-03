@@ -343,10 +343,11 @@ def create_app(
             status = rec.start(
                 duration_seconds=body.duration_seconds,
                 output_dir=body.output_dir,
-                width=capture.stats.width,
-                height=capture.stats.height,
-                fps=capture.stats.target_fps or None,
-            )
+            width=capture.stats.width,
+            height=capture.stats.height,
+            # Prefer write FPS (≤5), not capture target — Pi 2B encode budget.
+            fps=None,
+        )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:

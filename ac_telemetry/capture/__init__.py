@@ -346,11 +346,13 @@ class CaptureService:
         except Exception:  # noqa: BLE001 — settings may be incomplete in unit tests
             profile = None
         fps = float(profile.fps) if profile is not None else 10.0
+        # Write slower than capture on Pi 2B — full-frame MJPEG is expensive.
+        write_fps = min(5.0, max(1.0, fps))
         self.recorder = FrameRecorder(
             output_dir=self.settings.record_dir,
             default_seconds=self.settings.record_default_seconds,
             max_seconds=self.settings.record_max_seconds,
-            fps=fps,
+            fps=write_fps,
         )
 
     def set_session_hooks(self, on_start, on_stop) -> None:
