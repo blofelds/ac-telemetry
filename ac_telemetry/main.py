@@ -7,6 +7,7 @@ import logging
 import signal
 import sys
 import threading
+import time
 from typing import Any
 
 import uvicorn
@@ -30,7 +31,12 @@ logger = logging.getLogger("ac_telemetry")
 _shutdown = threading.Event()
 
 
-def build(settings=None):
+def build(
+    settings=None,
+    *,
+    on_startup=None,
+    on_shutdown=None,
+):
     settings = settings or get_settings()
     store = SessionStore(settings.data_dir)
     store.ensure()
@@ -49,7 +55,15 @@ def build(settings=None):
         get_capture_info=lambda: capture.stats.as_dict(),
     )
 
-    app = create_app(settings, capture, store, lap_store=lap_store, detect=detect)
+    app = create_app(
+        settings,
+        capture,
+        store,
+        lap_store=lap_store,
+        detect=detect,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+    )
     return settings, capture, detect, app
 
 
@@ -110,7 +124,50 @@ def main(argv: list[str] | None = None) -> None:
     if args.port:
         settings.port = args.port
 
-    settings, capture, detect, app = build(settings)
+    # Late-bound so lifespan closures see the real instances.
+    holders: dict[str, Any] = {"capture": None, "detect": None}
+
+    # uvicorn runs lifespan startup *before* binding the listen socket. Start
+    # capture only after bind so OpenCV import / VideoCapture open cannot delay
+    # (or thrash away) the listening port on a low-RAM Pi.
+    server_holder: dict[str, uvicorn.Server | None] = {"server": None}
+
+    def _on_startup() -> None:
+        def _start_after_bind() -> None:
+            deadline = time.monotonic() + 120.0
+            while time.monotonic() < deadline and not _shutdown.is_set():
+                srv = server_holder["server"]
+                if srv is not None and srv.started:
+                    break
+                time.sleep(0.05)
+            if _shutdown.is_set():
+                return
+            capture = holders["capture"]
+            detect = holders["detect"]
+            if capture is None or detect is None:
+                return
+            if not args.no_capture:
+                capture.start()
+            detect.start()
+
+        threading.Thread(
+            target=_start_after_bind, name="worker-start", daemon=True
+        ).start()
+
+    def _on_shutdown() -> None:
+        capture = holders["capture"]
+        detect = holders["detect"]
+        if capture is None or detect is None:
+            return
+        _stop_workers(detect, capture)
+
+    settings, capture, detect, app = build(
+        settings,
+        on_startup=_on_startup,
+        on_shutdown=_on_shutdown,
+    )
+    holders["capture"] = capture
+    holders["detect"] = detect
 
     config = uvicorn.Config(
         app,
@@ -119,6 +176,7 @@ def main(argv: list[str] | None = None) -> None:
         log_level="info",
     )
     server = uvicorn.Server(config)
+    server_holder["server"] = server
 
     def _handle_signal(signum: int, _frame: Any) -> None:
         try:
@@ -139,15 +197,6 @@ def main(argv: list[str] | None = None) -> None:
 
     if _shutdown.is_set():
         logger.info("Shutdown requested during startup; not binding HTTP")
-        _stop_workers(detect, capture)
-        return
-
-    if not args.no_capture:
-        capture.start()
-    detect.start()
-
-    if _shutdown.is_set():
-        logger.info("Shutdown requested before listen; exiting")
         _stop_workers(detect, capture)
         return
 
