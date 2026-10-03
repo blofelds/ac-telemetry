@@ -17,9 +17,9 @@ those dirs.
 `colon.png` / `period.png` in the bundled ACC dirs are synthetic separators (not in
 the upstream speed set). Separators under `ac_720p_capture/` are real HUD crops.
 `ac_720p_pi/` ships live separators too; digit span recovery (thin-bridge absorb
-+ oversize split) is in the matcher. Separator load/match for soft MJPEG
-colon/period is still a follow-on (see set README). Do not hybridize with VLC
-without documenting the risk.
++ oversize split) and midtone separator recovery (`V≥100` gap match + digit-soup
+normalize) are in the matcher. Do not hybridize with VLC without documenting
+the risk.
 
 ### Using the live Pi set (default)
 
@@ -31,9 +31,9 @@ glyphs_dir: templates/lap_time_digits/ac_720p_pi
 
 Full `0–9` + `:` / `.` from live Pi dumps. See
 [`ac_720p_pi/README.md`](ac_720p_pi/README.md). Digits rematch dump ROIs that
-VLC `ac_720p_capture/` mislabeled (`796719` → `135113`) and recover glued /
-truncated spans (`107960` on `1:07.960`). Separators need a later scoped fix
-before parse yields `1:35.113` / `1:07.960`.
+VLC `ac_720p_capture/` mislabeled (`796719` → `135113`), recover glued /
+truncated spans, and restore separators so parse yields `1:35.113` /
+`1:07.960`.
 
 ### Capture more glyphs on the Pi
 
