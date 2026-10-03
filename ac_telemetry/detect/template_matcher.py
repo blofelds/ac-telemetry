@@ -13,14 +13,22 @@ from typing import Any
 # Default canvas matches acc-telemetry speed_digits/ac_1080p (H×W).
 _DEFAULT_CANVAS = (28, 24)
 _MATCH_THRESHOLD = 0.50
+# Digits clear V≥150; live Pi colon/period peak ~129–143 (midtone).
+_DIGIT_V_MIN = 150
+_SEP_V_MIN = 100
+_S_MAX = 80
 
 
-def white_mask(roi_bgr: Any) -> Any:
-    """Keep white digit strokes; drop the dark cabin behind them."""
+def white_mask(roi_bgr: Any, *, v_min: int = _DIGIT_V_MIN) -> Any:
+    """Keep bright HUD strokes; drop the dark cabin behind them.
+
+    Default ``v_min=150`` matches digit ink. Pass ``_SEP_V_MIN`` for midtone
+    colon/period templates and gap probes that fail the digit cut.
+    """
     import cv2
 
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
-    return cv2.inRange(hsv, (0, 0, 150), (180, 80, 255))
+    return cv2.inRange(hsv, (0, 0, int(v_min)), (180, _S_MAX, 255))
 
 
 def segment_glyphs(
@@ -396,7 +404,12 @@ class DigitTemplateMatcher:
         import numpy as np
 
         empty: dict[str, Any] = {
-            "white_mask": {"v_min": 150, "s_max": 80, "ink_pixels": 0},
+            "white_mask": {
+                "v_min": _DIGIT_V_MIN,
+                "s_max": _S_MAX,
+                "sep_v_min": _SEP_V_MIN,
+                "ink_pixels": 0,
+            },
             "spans": [],
             "glyphs": [],
             "mask": None,
@@ -414,6 +427,7 @@ class DigitTemplateMatcher:
         span_rows: list[dict[str, Any]] = []
         glyph_rows: list[dict[str, Any]] = []
         symbols: list[str] = []
+        digit_span_idxs: list[int] = []
         failed = False
 
         for start, end in spans:
@@ -452,11 +466,24 @@ class DigitTemplateMatcher:
                 failed = True
                 break
             symbols.append(label)
+            digit_span_idxs.append(len(span_rows) - 1)
+
+        sep_glyphs: list[dict[str, Any]] = []
+        if not failed and symbols:
+            symbols, sep_glyphs = self._recover_separators(
+                roi_bgr,
+                digit_mask=mask,
+                digit_spans=spans,
+                digit_span_idxs=digit_span_idxs,
+                symbols=symbols,
+            )
+            glyph_rows.extend(sep_glyphs)
 
         diag: dict[str, Any] = {
             "white_mask": {
-                "v_min": 150,
-                "s_max": 80,
+                "v_min": _DIGIT_V_MIN,
+                "s_max": _S_MAX,
+                "sep_v_min": _SEP_V_MIN,
                 "ink_pixels": ink_pixels,
             },
             "spans": span_rows,
@@ -470,6 +497,170 @@ class DigitTemplateMatcher:
         if failed or not symbols:
             return None, diag
         return _normalize_time_symbols("".join(symbols)), diag
+
+    def _recover_separators(
+        self,
+        roi_bgr: Any,
+        *,
+        digit_mask: Any,
+        digit_spans: list[tuple[int, int]],
+        digit_span_idxs: list[int],
+        symbols: list[str],
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """Insert ``:`` / ``.`` from midtone ink in expected HUD gaps.
+
+        Digit segmentation stays on ``V≥150``. Soft MJPEG colon/period live
+        below that cut, so probe only the gaps where ``M:SS.mmm`` places
+        separators (after minute digits, after seconds digits). Falls through
+        unchanged when gap ink is missing — ``_normalize_time_symbols`` still
+        rebuilds from digit soup.
+        """
+        digits_only = [s for s in symbols if s.isdigit()]
+        n = len(digits_only)
+        if n not in (6, 7) or len(digit_span_idxs) != n:
+            return symbols, []
+
+        minute_digits = 1 if n == 6 else 2
+        # Slots are digit indices after which the separator belongs.
+        slots = (
+            (minute_digits - 1, ":"),
+            (minute_digits + 1, "."),
+        )
+
+        sep_mask = white_mask(roi_bgr, v_min=_SEP_V_MIN)
+        # Build interleaved list left-to-right.
+        out: list[str] = []
+        sep_rows: list[dict[str, Any]] = []
+        slot_map = dict(slots)
+        for dig_i, digit in enumerate(digits_only):
+            out.append(digit)
+            expected = slot_map.get(dig_i)
+            if expected is None:
+                continue
+            left_span_i = digit_span_idxs[dig_i]
+            right_span_i = digit_span_idxs[dig_i + 1]
+            gap0 = digit_spans[left_span_i][1]
+            gap1 = digit_spans[right_span_i][0]
+            label, detail = self._match_separator_in_gap(
+                sep_mask,
+                digit_mask=digit_mask,
+                gap0=gap0,
+                gap1=gap1,
+                expected=expected,
+            )
+            if label is None:
+                continue
+            out.append(label)
+            sep_rows.append(
+                {
+                    "index": len(sep_rows),
+                    "span": detail["span"],
+                    "candidates": detail["candidates"],
+                    "chosen": label,
+                    "threshold": detail["threshold"],
+                    "role": "separator",
+                    "expected": expected,
+                    "canvas": {
+                        "height": int(self.canvas[0]),
+                        "width": int(self.canvas[1]),
+                    },
+                }
+            )
+        return out, sep_rows
+
+    def _match_separator_in_gap(
+        self,
+        sep_mask: Any,
+        *,
+        digit_mask: Any,
+        gap0: int,
+        gap1: int,
+        expected: str,
+    ) -> tuple[str | None, dict[str, Any]]:
+        """Best midtone separator glyph inside ``[gap0, gap1)``."""
+        import numpy as np
+
+        empty = {
+            "span": [int(gap0), int(gap1)],
+            "candidates": [],
+            "threshold": min(0.35, self.match_threshold),
+        }
+        if gap1 - gap0 < 1:
+            return None, empty
+
+        # Ink in the gap that is not already counted as digit stroke.
+        gap = np.where(
+            (sep_mask[:, gap0:gap1] > 0) & (digit_mask[:, gap0:gap1] == 0),
+            255,
+            0,
+        ).astype(np.uint8)
+        counts = (gap > 0).sum(axis=0)
+        best_label: str | None = None
+        best_detail = empty
+        best_score = -1.0
+        start: int | None = None
+        for x, count in enumerate(list(counts) + [0]):
+            if count >= 1 and start is None:
+                start = x
+            elif count < 1 and start is not None:
+                s, e = gap0 + start, gap0 + x
+                start = None
+                label, detail, score = self._score_separator_span(
+                    sep_mask, s, e, expected=expected
+                )
+                if label is not None and score > best_score:
+                    best_label, best_detail, best_score = label, detail, score
+        return best_label, best_detail
+
+    def _score_separator_span(
+        self,
+        sep_mask: Any,
+        start: int,
+        end: int,
+        *,
+        expected: str,
+    ) -> tuple[str | None, dict[str, Any], float]:
+        """Match one midtone sub-span; accept only ``:`` / ``.`` (not digits)."""
+        min_rows = 1 if expected == "." else 2
+        glyph = _trim_rows(sep_mask[:, start:end], min_rows=min_rows)
+        detail: dict[str, Any] = {
+            "span": [int(start), int(end)],
+            "candidates": [],
+            "threshold": min(0.35, self.match_threshold),
+        }
+        if glyph is None:
+            return None, detail, -1.0
+        h, w = int(glyph.shape[0]), int(glyph.shape[1])
+        narrow = w <= max(8, int(self.canvas[1] * 0.45))
+        if not narrow:
+            return None, detail, -1.0
+
+        # Prefer template scores for separators; reject digit wins in gaps.
+        sep_threshold = min(0.35, self.match_threshold)
+        sep, sep_scores = self._best_label(
+            glyph, labels=(".", ":"), threshold=sep_threshold
+        )
+        detail["candidates"] = sep_scores[:8]
+        detail["threshold"] = sep_threshold
+        if sep is not None:
+            score = next(
+                (row["score"] for row in sep_scores if row["label"] == sep),
+                sep_threshold,
+            )
+            # Prefer the expected slot glyph; allow a clear win for the other.
+            if sep == expected or score >= 0.55:
+                return sep, detail, float(score)
+            return None, detail, -1.0
+
+        ink = int((glyph > 0).sum())
+        if ink < 60:
+            heuristic = "." if h < int(self.canvas[0] * 0.45) else ":"
+            if heuristic == expected:
+                detail["candidates"] = [
+                    {"label": heuristic, "score": round(sep_threshold, 4)}
+                ]
+                return heuristic, detail, float(sep_threshold)
+        return None, detail, -1.0
 
     @staticmethod
     def _load_templates(template_dir: Path) -> dict[str, Any]:
@@ -518,7 +709,8 @@ class DigitTemplateMatcher:
             image = cv2.imread(str(path), cv2.IMREAD_COLOR)
             if image is None:
                 continue
-            trimmed = _trim_to_ink(white_mask(image))
+            # Midtone live crops peak below digit V≥150; use sep cut on load.
+            trimmed = _trim_to_ink(white_mask(image, v_min=_SEP_V_MIN))
             if trimmed is not None:
                 raw[label] = trimmed
 
@@ -533,20 +725,32 @@ class DigitTemplateMatcher:
 
 
 
+def _is_lap_time_text(text: str | None) -> bool:
+    import re
+
+    return bool(text and re.fullmatch(r"\d{1,2}:\d{2}\.\d{3}", text))
+
+
 def _normalize_time_symbols(raw: str) -> str | None:
-    """Insert a missing ``.`` when period ink was too faint to segment.
+    """Insert missing separators when soft MJPEG drops colon/period ink.
 
     AC last-lap HUD is ``M:SS.mmm`` / ``MM:SS.mmm``. Colon usually survives
-    as two stacked dots; the decimal can vanish on a small 720p crop. If we
-    already have ``M:SSmmm`` (5–6 digits + one colon), restore the period.
+    as two stacked dots; the decimal can vanish on a small 720p crop. MJPEG
+    softness can drop both separators while leaving the six/seven digits —
+    rebuild ``M:SS.mmm`` from the digit run in that case (seconds must be
+    ``< 60`` so random 6-digit noise does not become a fake lap time).
     """
+    import re
+
     if not raw:
         return None
+    if _is_lap_time_text(raw):
+        return raw
+    if "." in raw and ":" in raw:
+        return raw
     if "." in raw:
         return raw
     # e.g. 1:44321 → 1:44.321 ; 12:34567 → 12:34.567
-    import re
-
     match = re.fullmatch(r"(\d{1,2}):(\d{5})", raw)
     if match:
         minutes, rest = match.group(1), match.group(2)
@@ -554,4 +758,14 @@ def _normalize_time_symbols(raw: str) -> str | None:
     match = re.fullmatch(r"(\d{1,2}):(\d{2})(\d{3})", raw)
     if match:
         return f"{match.group(1)}:{match.group(2)}.{match.group(3)}"
+
+    digits = re.sub(r"[^0-9]", "", raw)
+    if re.fullmatch(r"\d{6}", digits):
+        minutes, seconds, millis = digits[0], digits[1:3], digits[3:]
+        if int(seconds) < 60:
+            return f"{minutes}:{seconds}.{millis}"
+    if re.fullmatch(r"\d{7}", digits):
+        minutes, seconds, millis = digits[:2], digits[2:4], digits[4:]
+        if int(seconds) < 60:
+            return f"{minutes}:{seconds}.{millis}"
     return raw

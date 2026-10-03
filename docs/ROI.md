@@ -27,7 +27,7 @@ trusting any reader.
 | --- | --- |
 | `mock` | Laptop / plumbing tests; no pixels needed |
 | `tesseract` | Default OCR path once `rois.lap_time` is calibrated |
-| `template` (alias `assetto_corsa`) | **Backup** when Tesseract misreads AC’s block font. Uses OpenCV `matchTemplate` on digit PNGs under `templates/lap_time_digits/`. **Bundled `ac_*` are ACC (wrong game; confirmed on Pi)** — prefer **`ac_720p_pi`** (live HDMI detect crops; complete 0–9 + `:` / `.`) over VLC `ac_720p_capture` on soft Pi MJPEG. Digit span recovery (thin-bridge absorb + oversize split) ships; separator match is still follow-on. Capture more with **/debug → Save glyph** into `glyphs_dir`. PNG templates do **not** help Tesseract. |
+| `template` (alias `assetto_corsa`) | **Backup** when Tesseract misreads AC’s block font. Uses OpenCV `matchTemplate` on digit PNGs under `templates/lap_time_digits/`. **Bundled `ac_*` are ACC (wrong game; confirmed on Pi)** — prefer **`ac_720p_pi`** (live HDMI detect crops; complete 0–9 + `:` / `.`) over VLC `ac_720p_capture` on soft Pi MJPEG. Digit span recovery (thin-bridge absorb + oversize split) and midtone separator recovery ship. Capture more with **/debug → Save glyph** into `glyphs_dir`. PNG templates do **not** help Tesseract. |
 
 Keep `reader: tesseract` (or `mock`) until OCR is ruled out. Switch only the
 YAML `detect.lap_time.reader` value — mock and tesseract stay available.
