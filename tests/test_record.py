@@ -57,14 +57,15 @@ def test_record_start_stop_writes_1280x720(tmp_path: Path) -> None:
     assert body["recording"] is True
     path = Path(body["path"])
     assert path.parent == record_dir
+    assert path.suffix in {".avi", ".mkv"}
 
     # Tee synthetic full frames the way the capture loop would.
-    for i in range(8):
+    for i in range(12):
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         frame[:] = (10, 20 + i, 30)
         assert capture.recorder is not None
         capture.recorder.offer_frame(frame)
-        time.sleep(0.05)
+        time.sleep(0.12)
 
     stop = client.post("/api/debug/record/stop")
     assert stop.status_code == 200, stop.text
@@ -112,18 +113,18 @@ def test_record_rejects_double_start(tmp_path: Path) -> None:
 
 
 def test_frame_recorder_direct_file(tmp_path: Path) -> None:
-    """Unit-level: recorder writes MJPEG AVI at requested geometry."""
+    """Unit-level: recorder writes a readable clip at requested geometry."""
     rec = FrameRecorder(
         output_dir=tmp_path,
         default_seconds=2,
         max_seconds=5,
-        fps=10.0,
+        fps=2.0,
     )
-    status = rec.start(duration_seconds=2, width=1280, height=720, fps=10.0)
+    status = rec.start(duration_seconds=2, width=1280, height=720, fps=2.0)
     path = Path(status["path"])
-    for _ in range(5):
+    for _ in range(6):
         rec.offer_frame(np.full((720, 1280, 3), 40, dtype=np.uint8))
-        time.sleep(0.02)
+        time.sleep(0.15)
     done = rec.stop()
     assert done["frames_written"] >= 1
     assert path.is_file()

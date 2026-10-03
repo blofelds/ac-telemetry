@@ -345,7 +345,7 @@ def create_app(
                 output_dir=body.output_dir,
             width=capture.stats.width,
             height=capture.stats.height,
-            # Prefer write FPS (≤5), not capture target — Pi 2B encode budget.
+            # Prefer write FPS (≤2), not capture target — Pi 2B encode budget.
             fps=None,
         )
         except ValueError as exc:

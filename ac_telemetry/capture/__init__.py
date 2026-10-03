@@ -347,7 +347,7 @@ class CaptureService:
             profile = None
         fps = float(profile.fps) if profile is not None else 10.0
         # Write slower than capture on Pi 2B — full-frame MJPEG is expensive.
-        write_fps = min(5.0, max(1.0, fps))
+        write_fps = min(2.0, max(1.0, fps))
         self.recorder = FrameRecorder(
             output_dir=self.settings.record_dir,
             default_seconds=self.settings.record_default_seconds,
