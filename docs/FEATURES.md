@@ -14,6 +14,7 @@ Honest inventory of what ships now versus what is planned.
 
 - **`v4l2`** — OpenCV `VideoCapture` on a UVC device (default; system OpenCV on Pi 2B).
 - **`mock`** — synthetic frames at the profile FPS (`--backend mock` / `AC_TELEMETRY_BACKEND=mock`).
+- **`file`** (alias **`video`**) — OpenCV `VideoCapture` on a clip, image, or image-sequence path (`file_path`, optional `loop`). Sandbox HITL: `config/sandbox_file.yaml` on port **8742** (never opens `/dev/video0`).
 
 ### Health and capture metrics
 
