@@ -647,9 +647,16 @@ class DigitTemplateMatcher:
                 (row["score"] for row in sep_scores if row["label"] == sep),
                 sep_threshold,
             )
-            # Prefer the expected slot glyph; allow a clear win for the other.
-            if sep == expected or score >= 0.55:
+            # Only accept the separator expected for this HUD slot. A high
+            # colon score in the period gap (sharp VLC crops) must not win.
+            if sep == expected:
                 return sep, detail, float(score)
+            expected_score = next(
+                (row["score"] for row in sep_scores if row["label"] == expected),
+                None,
+            )
+            if expected_score is not None and expected_score >= sep_threshold:
+                return expected, detail, float(expected_score)
             return None, detail, -1.0
 
         ink = int((glyph > 0).sum())
