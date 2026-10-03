@@ -191,6 +191,22 @@ class FrameRecorder:
             self._timer.start()
             return self._status.as_dict()
 
+    def request_stop(self) -> None:
+        """Non-blocking stop signal (safe from a SIGINT handler)."""
+        with self._lock:
+            timer = self._timer
+            self._timer = None
+            q = self._queue
+            if not self._status.recording and (
+                self._thread is None or not self._thread.is_alive()
+            ):
+                return
+            self._stop.set()
+        if timer is not None:
+            timer.cancel()
+        if q is not None:
+            self._signal_writer_stop(q)
+
     def stop(self, *, join_timeout: float = 30.0) -> dict[str, Any]:
         """Stop recording and finalize the file (idempotent).
 
