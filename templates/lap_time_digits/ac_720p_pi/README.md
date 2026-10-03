@@ -29,10 +29,10 @@ from VLC without documenting the risk (`1↔7` / `3↔9` / `5↔6` lookalikes).
   `20261002-002656` after span recovery).
 - **Digit span recovery** absorbs multi-column 1-ink bridges (severed `7` top
   bar) and splits oversized glued runs at digit-pitch valleys (`9`+`6`).
-- **Separators are included** as live-domain PNGs, but current
-  `white_mask` (`V≥150`) zeros their midtone ink on load, so colon/period still
-  do not enter the symbol string. Parse to `1:07.960` / `1:35.113` needs a
-  **follow-on** separator fix — not soft-MJPEG matcher v2.
+- **Separator recovery** loads midtone `colon.png` / `period.png` at `V≥100`,
+  matches them in the expected `M:SS.mmm` gaps (digit mask stays `V≥150`), and
+  falls back to digit-soup normalize (`107960` → `1:07.960`). Not soft-MJPEG
+  matcher v2.
 - Point config here for Pi 720p template matching:
 
 ```yaml
