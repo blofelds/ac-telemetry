@@ -70,6 +70,8 @@ def _client(tmp_path: Path) -> tuple[TestClient, DetectService]:
     settings.detect.lap_time.reader = "mock"
     settings.detect.lap_time.mode = "last_lap"
     settings.detect.lap_time.mock_interval_seconds = 1.0
+    # Mock invents a new LAST every interval; disable hold so smoke can finish.
+    settings.detect.lap_time.last_lap_stable_ms = 0
 
     store = SessionStore(settings.data_dir)
     store.ensure()
@@ -129,6 +131,7 @@ def test_api_current_lap_and_metrics(tmp_path: Path) -> None:
 def _last_lap_service(
     *,
     min_lap_ms: int = 30_000,
+    last_lap_stable_ms: int = 0,
     debounce_reads: int = 2,
 ) -> tuple[DetectService, list[dict[str, Any]]]:
     """DetectService wired for direct ``_handle_reading`` tests (no thread)."""
@@ -138,6 +141,7 @@ def _last_lap_service(
     settings.detect.lap_time.reader = "mock"
     settings.detect.lap_time.mode = "last_lap"
     settings.detect.lap_time.min_lap_ms = min_lap_ms
+    settings.detect.lap_time.last_lap_stable_ms = last_lap_stable_ms
     settings.detect.debug_dump.enabled = False
 
     recorded: list[dict[str, Any]] = []
@@ -166,10 +170,33 @@ def _feed_stable(
     lap_time_ms: int,
     *,
     times: int = 2,
+    mono: dict[str, float] | None = None,
+    step_s: float = 0.5,
 ) -> None:
+    """Feed identical OK readings; optionally advance ``mono['t']`` between them."""
     text = format_lap_time_ms(lap_time_ms)
     reading = LapTimeReading(ok=True, text=text, lap_time_ms=lap_time_ms)
-    for _ in range(times):
+    for i in range(times):
+        if mono is not None and i > 0:
+            mono["t"] += step_s
+        detect._handle_reading(detect.settings.detect, reading, 0.01)
+
+
+def _hold_stable(
+    detect: DetectService,
+    lap_time_ms: int,
+    mono: dict[str, float],
+    *,
+    hold_s: float,
+    step_s: float = 0.5,
+) -> None:
+    """Keep feeding the same LAST until ``hold_s`` of wall time has elapsed."""
+    text = format_lap_time_ms(lap_time_ms)
+    reading = LapTimeReading(ok=True, text=text, lap_time_ms=lap_time_ms)
+    detect._handle_reading(detect.settings.detect, reading, 0.01)
+    end = mono["t"] + hold_s
+    while mono["t"] < end:
+        mono["t"] = min(end, mono["t"] + step_s)
         detect._handle_reading(detect.settings.detect, reading, 0.01)
 
 
@@ -265,3 +292,112 @@ def test_last_lap_same_value_does_not_rerecord(
     mono["t"] = 5.0
     _feed_stable(detect, 70_000)
     assert len(recorded) == 1
+
+
+def test_last_lap_stable_hold_blocks_brief_flicker_after_gate(
+    monkeypatch: Any,
+) -> None:
+    """After min_lap opens, a short-lived distinct OCR value must not CSV-write."""
+    detect, recorded = _last_lap_service(
+        min_lap_ms=30_000,
+        last_lap_stable_ms=3_000,
+        debounce_reads=2,
+    )
+    mono = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: mono["t"])
+
+    _hold_stable(detect, 141_430, mono, hold_s=3.0)  # 2:21.430
+    assert len(recorded) == 1
+
+    # Gate re-opens mid next lap; OCR invents +60ms for < stable hold.
+    mono["t"] = 85.0
+    _hold_stable(detect, 141_490, mono, hold_s=1.0)  # 2:21.490 brief
+    assert len(recorded) == 1
+
+    # Back to prior LAST — still no extra row.
+    _hold_stable(detect, 141_430, mono, hold_s=1.0)
+    assert len(recorded) == 1
+
+
+def test_last_lap_stable_hold_allows_real_change_after_gap(
+    monkeypatch: Any,
+) -> None:
+    """Real LAST that holds ≥ last_lap_stable_ms records when wall gap ≥ min_lap."""
+    detect, recorded = _last_lap_service(
+        min_lap_ms=30_000,
+        last_lap_stable_ms=3_000,
+        debounce_reads=2,
+    )
+    mono = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: mono["t"])
+
+    _hold_stable(detect, 141_430, mono, hold_s=3.0)
+    assert len(recorded) == 1
+
+    mono["t"] = 67.0  # ~real short lap after a long LAST
+    _hold_stable(detect, 67_538, mono, hold_s=3.0)  # 1:07.538
+    assert len(recorded) == 2
+    assert recorded[1]["lap_time_ms"] == 67_538
+
+
+def test_last_lap_stable_hold_allows_close_consecutive_values(
+    monkeypatch: Any,
+) -> None:
+    """Hundredths-apart real laps still both record (no value-proximity reject)."""
+    detect, recorded = _last_lap_service(
+        min_lap_ms=30_000,
+        last_lap_stable_ms=3_000,
+        debounce_reads=2,
+    )
+    mono = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: mono["t"])
+
+    _hold_stable(detect, 100_000, mono, hold_s=3.0)
+    mono["t"] = 60.0
+    _hold_stable(detect, 100_050, mono, hold_s=3.0)
+    assert len(recorded) == 2
+    assert abs(recorded[1]["lap_time_ms"] - recorded[0]["lap_time_ms"]) == 50
+
+
+def test_last_lap_stint_gated_extras_pattern(
+    monkeypatch: Any,
+) -> None:
+    """Synthetic replay of Pi session 6aea35251c54 extras during lap 3.
+
+    CSV Δt proved min_lap_ms=30000 allowed 2:21.490 (+85s) and a later
+    thousandths flicker; brief holds must not become rows, while the real
+    third LAST that stays put still records.
+    """
+    detect, recorded = _last_lap_service(
+        min_lap_ms=30_000,
+        last_lap_stable_ms=3_000,
+        debounce_reads=2,
+    )
+    mono = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: mono["t"])
+
+    # Lap 1 (digit error in production — acceptance path only here).
+    _hold_stable(detect, 67_111, mono, hold_s=3.0)
+    assert [r["lap_time_ms"] for r in recorded] == [67_111]
+
+    # Lap 2 correct after ~135s wall.
+    mono["t"] = 135.0
+    _hold_stable(detect, 141_430, mono, hold_s=3.0)
+    assert [r["lap_time_ms"] for r in recorded] == [67_111, 141_430]
+
+    # Extra during lap 3: +60ms OCR of unchanged LAST, brief, at +85s.
+    mono["t"] = 135.0 + 85.0
+    _hold_stable(detect, 141_490, mono, hold_s=1.5)
+    assert len(recorded) == 2
+
+    # Real third LAST holds (wall gap from lap-2 write still ≫ min_lap).
+    mono["t"] = 135.0 + 95.0
+    _hold_stable(detect, 67_538, mono, hold_s=3.0)
+    assert [r["lap_time_ms"] for r in recorded] == [67_111, 141_430, 67_538]
+
+    # Post-lap-3 thousandths flicker lasting < stable hold — no 4th/5th row.
+    mono["t"] = 135.0 + 95.0 + 31.0
+    _hold_stable(detect, 67_996, mono, hold_s=1.5)
+    mono["t"] = 135.0 + 95.0 + 61.0
+    _hold_stable(detect, 67_696, mono, hold_s=1.5)
+    assert [r["lap_time_ms"] for r in recorded] == [67_111, 141_430, 67_538]

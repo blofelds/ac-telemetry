@@ -72,6 +72,11 @@ class LapTimeDetectSettings(BaseModel):
     # last_lap: min wall-clock ms between CSV writes (blocks OCR flicker spam).
     # current_timer: ignore short segments when detecting a reset.
     min_lap_ms: int = 30_000
+    # last_lap only: new LAST text must hold this many ms before the first CSV
+    # write. min_lap_ms alone is not enough on long laps — OCR can invent a
+    # distinct value every ≥30s while the HUD is unchanged. Real consecutive
+    # LAST updates that stay put still record when the wall gap is ≥ min_lap_ms.
+    last_lap_stable_ms: int = 3_000
     reset_slack_ms: int = 5_000
     # template / assetto_corsa only — digit PNGs (see templates/lap_time_digits/).
     templates_dir: str = "templates/lap_time_digits/ac_720p"
@@ -188,6 +193,7 @@ def _parse_detect(raw: dict[str, Any]) -> DetectSettings:
             "mode",
             "mock_interval_seconds",
             "min_lap_ms",
+            "last_lap_stable_ms",
             "reset_slack_ms",
             "templates_dir",
             "match_threshold",
