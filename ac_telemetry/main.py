@@ -6,10 +6,11 @@ import argparse
 import logging
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
-from typing import Any
+from typing import Any, BinaryIO
 
 import uvicorn
 
@@ -31,11 +32,11 @@ logger = logging.getLogger("ac_telemetry")
 # uvicorn's default KeyboardInterrupt path).
 _shutdown = threading.Event()
 
-# After first SIGINT/SIGTERM, force-exit if graceful shutdown cannot finish.
-# The watchdog thread is started at process boot (never from a signal handler)
-# and blocks on `_shutdown`; sleep releases the GIL so the countdown can
-# progress while another thread is inside a long OpenCV C call.
+# After first SIGINT/SIGTERM, a *subprocess* watchdog SIGKILLs this process if
+# graceful shutdown stalls. A same-process Python thread is not enough on the
+# Pi: OpenCV can hold the GIL through the whole countdown.
 DEFAULT_SHUTDOWN_WATCHDOG_SECONDS = 8.0
+_watchdog_stdin: BinaryIO | None = None
 
 
 def build(
@@ -129,29 +130,71 @@ def preload_opencv_if_needed(settings: Any) -> float:
     return elapsed
 
 
+def trip_shutdown_watchdog() -> None:
+    """Wake the subprocess watchdog (safe-ish from a SIGINT handler)."""
+    global _watchdog_stdin
+    stdin = _watchdog_stdin
+    _watchdog_stdin = None
+    if stdin is None:
+        return
+    try:
+        fd = stdin.fileno()
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        os.write(fd, b"x")
+    except OSError:
+        pass
+    try:
+        stdin.close()
+    except OSError:
+        pass
+
+
 def start_shutdown_watchdog(
     seconds: float = DEFAULT_SHUTDOWN_WATCHDOG_SECONDS,
 ) -> None:
-    """Start a daemon that ``os._exit``s if shutdown stalls after SIGINT/SIGTERM.
+    """Start an out-of-process SIGKILL watchdog for stalled shutdown.
 
-    Must be called from normal code (not from a signal handler): CPython may
-    defer or drop thread creation requested inside a handler, which left the
-    Pi file-backend proof stuck for ~24s after Ctrl-C despite an 8s budget.
+    The child does not share this interpreter's GIL, so it can still fire while
+    OpenCV is stuck in a native call. ``trip_shutdown_watchdog()`` (from the
+    SIGINT handler) writes one byte to start the countdown; EOF without a byte
+    means the parent exited cleanly and the child exits without killing.
     """
+    global _watchdog_stdin
     budget = max(1.0, float(seconds))
-
-    def _watch() -> None:
-        _shutdown.wait()
-        deadline = time.monotonic() + budget
-        while time.monotonic() < deadline:
-            time.sleep(0.2)
-        logger.error(
-            "Shutdown watchdog expired after %.0fs — forcing exit",
-            budget,
+    parent = os.getpid()
+    # Tiny inline script keeps deploy surface small (no helper module).
+    child = (
+        "import os,sys,time,signal\n"
+        "parent=int(sys.argv[1]); delay=float(sys.argv[2])\n"
+        "data=sys.stdin.read(1)\n"
+        "if not data:\n"
+        "    raise SystemExit(0)\n"
+        "time.sleep(delay)\n"
+        "try:\n"
+        "    os.kill(parent, signal.SIGKILL)\n"
+        "except ProcessLookupError:\n"
+        "    pass\n"
+    )
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", child, str(parent), f"{budget:.3f}"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
         )
-        os._exit(1)
-
-    threading.Thread(target=_watch, name="shutdown-watchdog", daemon=True).start()
+    except OSError as exc:
+        logger.warning("Shutdown watchdog not started: %s", exc)
+        return
+    _watchdog_stdin = proc.stdin
+    # Backup trip path if the signal handler could not write (still needs GIL).
+    threading.Thread(
+        target=lambda: (_shutdown.wait(), trip_shutdown_watchdog()),
+        name="shutdown-watchdog-trip",
+        daemon=True,
+    ).start()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -264,6 +307,7 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Shutting down… (%s)", name)
         _shutdown.set()
         server.should_exit = True
+        trip_shutdown_watchdog()
         # Never join from a signal handler: capture may be inside a long OpenCV
         # import/open holding the GIL; blocking joins freeze Ctrl-C for minutes.
         try:
