@@ -30,11 +30,11 @@ logger = logging.getLogger("ac_telemetry")
 # binds, and after bind must set Server.should_exit (custom handlers replace
 # uvicorn's default KeyboardInterrupt path).
 _shutdown = threading.Event()
-_watchdog_armed = threading.Event()
 
 # After first SIGINT/SIGTERM, force-exit if graceful shutdown cannot finish.
-# time.sleep in the watchdog releases the GIL so this can still fire while
-# another thread is inside a long OpenCV C call that periodically yields.
+# The watchdog thread is started at process boot (never from a signal handler)
+# and blocks on `_shutdown`; sleep releases the GIL so the countdown can
+# progress while another thread is inside a long OpenCV C call.
 DEFAULT_SHUTDOWN_WATCHDOG_SECONDS = 8.0
 
 
@@ -129,32 +129,33 @@ def preload_opencv_if_needed(settings: Any) -> float:
     return elapsed
 
 
-def arm_shutdown_watchdog(seconds: float = DEFAULT_SHUTDOWN_WATCHDOG_SECONDS) -> None:
-    """Force ``os._exit`` if graceful shutdown stalls (OpenCV/GIL/zram)."""
-    if _watchdog_armed.is_set():
-        return
-    _watchdog_armed.set()
+def start_shutdown_watchdog(
+    seconds: float = DEFAULT_SHUTDOWN_WATCHDOG_SECONDS,
+) -> None:
+    """Start a daemon that ``os._exit``s if shutdown stalls after SIGINT/SIGTERM.
+
+    Must be called from normal code (not from a signal handler): CPython may
+    defer or drop thread creation requested inside a handler, which left the
+    Pi file-backend proof stuck for ~24s after Ctrl-C despite an 8s budget.
+    """
     budget = max(1.0, float(seconds))
 
     def _watch() -> None:
-        # sleep releases the GIL; poll so a clean exit can cancel naturally
-        # by process end (daemon thread) before the deadline.
+        _shutdown.wait()
         deadline = time.monotonic() + budget
         while time.monotonic() < deadline:
             time.sleep(0.2)
-        if _shutdown.is_set():
-            logger.error(
-                "Shutdown watchdog expired after %.0fs — forcing exit",
-                budget,
-            )
-            os._exit(1)
+        logger.error(
+            "Shutdown watchdog expired after %.0fs — forcing exit",
+            budget,
+        )
+        os._exit(1)
 
     threading.Thread(target=_watch, name="shutdown-watchdog", daemon=True).start()
 
 
 def main(argv: list[str] | None = None) -> None:
     _shutdown.clear()
-    _watchdog_armed.clear()
     parser = argparse.ArgumentParser(description="AC Telemetry service")
     parser.add_argument(
         "--config",
@@ -263,7 +264,6 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Shutting down… (%s)", name)
         _shutdown.set()
         server.should_exit = True
-        arm_shutdown_watchdog(DEFAULT_SHUTDOWN_WATCHDOG_SECONDS)
         # Never join from a signal handler: capture may be inside a long OpenCV
         # import/open holding the GIL; blocking joins freeze Ctrl-C for minutes.
         try:
@@ -274,9 +274,12 @@ def main(argv: list[str] | None = None) -> None:
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
+    # Pre-start watchdog before preload/bind — it only counts down after
+    # `_shutdown` is set by the signal handler.
+    start_shutdown_watchdog(DEFAULT_SHUTDOWN_WATCHDOG_SECONDS)
 
     # Install handlers before preload so a stuck import still gets should_exit
-    # queued; watchdog arms only after the first signal is delivered.
+    # queued once the main thread can run again.
     preload_opencv_if_needed(settings)
 
     if _shutdown.is_set():
