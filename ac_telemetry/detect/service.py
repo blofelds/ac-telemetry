@@ -81,6 +81,8 @@ class DetectService:
     _stable_ms: int | None = field(default=None, init=False, repr=False)
     _stable_count: int = field(default=0, init=False, repr=False)
     _prev_stable_ms: int | None = field(default=None, init=False, repr=False)
+    # Wall-clock of last successful last_lap CSV write (monotonic seconds).
+    _last_lap_record_mono: float | None = field(default=None, init=False, repr=False)
     _last_dump: LastDetectDump = field(default_factory=LastDetectDump, init=False, repr=False)
     _failures_since_dump: int = field(default=0, init=False, repr=False)
 
@@ -138,6 +140,7 @@ class DetectService:
         self._stable_text = None
         self._stable_ms = None
         self._stable_count = 0
+        self._last_lap_record_mono = None
 
     def get_last_dump(self) -> LastDetectDump:
         """Return the in-memory last detect dump (may be empty)."""
@@ -342,7 +345,13 @@ class DetectService:
 
         if mode == "last_lap":
             # New distinct last-lap value → record it (skip the initial 0:00 seed).
+            # Gate on wall-clock since last CSV write (≥ min_lap_ms) so OCR flicker
+            # within one real lap cannot spam rows. Do NOT reject close lap *values*
+            # — real consecutive laps can differ by only tens of ms.
             if record_ms > 0 and record_ms != self.state.last_recorded_time_ms:
+                if not self._last_lap_wall_clock_ok(detect):
+                    # Leave _prev_stable_ms unset so we retry once the gate opens.
+                    return
                 should_record = True
         else:  # current_timer
             # Record previous stable time when the timer resets downward.
@@ -388,6 +397,8 @@ class DetectService:
 
         self.state.last_recorded_time = saved.get("lap_time", record_text)
         self.state.last_recorded_time_ms = int(saved.get("lap_time_ms") or record_ms)
+        if mode == "last_lap":
+            self._last_lap_record_mono = time.monotonic()
         if self.on_metrics is not None:
             self.on_metrics(lap_recorded=True)
         logger.info(
@@ -396,3 +407,11 @@ class DetectService:
             self.state.lap_number,
             record_text,
         )
+
+    def _last_lap_wall_clock_ok(self, detect: DetectSettings) -> bool:
+        """True if enough wall time has passed since the last last_lap CSV write."""
+        if self._last_lap_record_mono is None:
+            return True
+        min_lap_ms = max(0, int(detect.lap_time.min_lap_ms))
+        elapsed_ms = (time.monotonic() - self._last_lap_record_mono) * 1000.0
+        return elapsed_ms >= min_lap_ms
