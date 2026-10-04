@@ -138,6 +138,9 @@ class Settings(BaseSettings):
     record_dir: Path = Path("data/recordings")
     record_default_seconds: float = 60.0
     record_max_seconds: float = 120.0
+    # Bound VideoCapture/file open so a missing HDMI signal or stuck V4L2
+    # driver cannot block the capture thread (and Ctrl-C joins) for minutes.
+    capture_open_timeout_seconds: float = 15.0
 
     # Filled from YAML profiles after load
     profiles: dict[str, CaptureProfile] = Field(default_factory=dict)
@@ -326,6 +329,11 @@ def load_settings(config_path: Path | None = None) -> Settings:
             env_settings.record_max_seconds
             if "AC_TELEMETRY_RECORD_MAX_SECONDS" in os.environ
             else float(data.get("record_max_seconds", 120.0))
+        ),
+        capture_open_timeout_seconds=(
+            env_settings.capture_open_timeout_seconds
+            if "AC_TELEMETRY_CAPTURE_OPEN_TIMEOUT_SECONDS" in os.environ
+            else float(data.get("capture_open_timeout_seconds", 15.0))
         ),
         profiles=profiles,
         rois=rois,

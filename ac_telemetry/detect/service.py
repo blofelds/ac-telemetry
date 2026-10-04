@@ -119,8 +119,12 @@ class DetectService:
                 detect.debug_dump.enabled,
             )
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def request_stop(self) -> None:
+        """Non-blocking stop signal (safe from a SIGINT handler)."""
         self._stop.set()
+
+    def stop(self, timeout: float = 5.0) -> None:
+        self.request_stop()
         thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout)

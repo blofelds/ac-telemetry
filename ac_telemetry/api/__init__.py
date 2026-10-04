@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Response
@@ -64,11 +66,26 @@ def create_app(
     *,
     lap_store: LapStore | None = None,
     detect: DetectService | None = None,
+    on_startup: Callable[[], None] | None = None,
+    on_shutdown: Callable[[], None] | None = None,
 ) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # Start capture/detect *after* the server is binding so OpenCV import /
+        # VideoCapture open cannot delay the listening port on a low-RAM Pi.
+        if on_startup is not None:
+            on_startup()
+        try:
+            yield
+        finally:
+            if on_shutdown is not None:
+                on_shutdown()
+
     app = FastAPI(
         title="AC Telemetry",
         version="0.3.0",
         description="Live HDMI capture with session metadata and lap-time logging.",
+        lifespan=lifespan,
     )
     app.state.settings = settings
     app.state.capture = capture

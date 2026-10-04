@@ -34,6 +34,10 @@ backend: v4l2
 # V4L2 device path (ignored by mock / file)
 device: /dev/video0
 
+# Bound VideoCapture/file open (seconds). Prevents multi-minute hangs when the
+# HDMI dongle has no signal or the driver stalls; capture thread errors out.
+capture_open_timeout_seconds: 15
+
 # file | video backend only (ignored by mock / v4l2). See config/sandbox_file.yaml.
 # file_path: /home/user1/ac-telemetry-testdata/sandbox_smoke_1280x720.mp4
 # loop: true
