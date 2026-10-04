@@ -401,3 +401,47 @@ def test_last_lap_stint_gated_extras_pattern(
     mono["t"] = 135.0 + 95.0 + 61.0
     _hold_stable(detect, 67_696, mono, hold_s=1.5)
     assert [r["lap_time_ms"] for r in recorded] == [67_111, 141_430, 67_538]
+
+
+def test_last_lap_clip_ocr_midlap_flicker_fixture(monkeypatch: Any) -> None:
+    """Regression from card clip 125659 OCR + session-like mid-lap timing.
+
+    Fixture is change-points from template OCR on
+    ``20261004-125659_card_1280x720.mjpeg`` (no video binary). HUD LAST was
+    stable; OCR thousandths variants become an extra CSV row under #24 once
+    ``min_lap_ms`` re-opens, and ``last_lap_stable_ms`` blocks that blip.
+    """
+    import json
+
+    fixture_path = (
+        Path(__file__).resolve().parent / "fixtures" / "last_lap_clip_ocr_125659.json"
+    )
+    fixture = json.loads(fixture_path.read_text())
+    dominant = int(fixture["dominant_ms"])
+    flicker = int(fixture["flicker_variants_ms"][0])
+
+    # #24: min_lap only — mid-lap flicker after 85s becomes a 2nd write.
+    detect24, rec24 = _last_lap_service(
+        min_lap_ms=30_000, last_lap_stable_ms=0, debounce_reads=2
+    )
+    mono = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: mono["t"])
+    _hold_stable(detect24, dominant, mono, hold_s=3.0)
+    mono["t"] = 85.0
+    _hold_stable(detect24, flicker, mono, hold_s=1.5)
+    assert [r["lap_time_ms"] for r in rec24] == [dominant, flicker]
+
+    # #25: same OCR timeline — brief flicker must not write.
+    detect25, rec25 = _last_lap_service(
+        min_lap_ms=30_000, last_lap_stable_ms=3_000, debounce_reads=2
+    )
+    mono["t"] = 0.0
+    _hold_stable(detect25, dominant, mono, hold_s=3.0)
+    mono["t"] = 85.0
+    _hold_stable(detect25, flicker, mono, hold_s=1.5)
+    assert [r["lap_time_ms"] for r in rec25] == [dominant]
+
+    # Real held change after the gap still records under #25.
+    mono["t"] = 95.0
+    _hold_stable(detect25, 67_538, mono, hold_s=3.0)
+    assert [r["lap_time_ms"] for r in rec25] == [dominant, 67_538]
