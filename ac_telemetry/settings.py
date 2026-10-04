@@ -69,6 +69,7 @@ class LapTimeDetectSettings(BaseModel):
     mode: LapTimeMode = "last_lap"
     # Mock only: how often a synthetic completed lap appears.
     mock_interval_seconds: float = 45.0
+    # last_lap: min wall-clock ms between CSV writes (blocks OCR flicker spam).
     # current_timer: ignore short segments when detecting a reset.
     min_lap_ms: int = 30_000
     reset_slack_ms: int = 5_000

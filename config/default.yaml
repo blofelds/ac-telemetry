@@ -102,6 +102,8 @@ detect:
     reader: template
     mode: last_lap
     mock_interval_seconds: 45
+    # last_lap: min wall-clock ms between CSV writes (OCR flicker gate).
+    # current_timer: ignore short segments when detecting a reset.
     min_lap_ms: 30000
     reset_slack_ms: 5000
     # Same path as glyphs_dir — live Pi HDMI crops (full 0–9 + : / .; see set README).
