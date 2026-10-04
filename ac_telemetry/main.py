@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import threading
@@ -16,7 +17,7 @@ from ac_telemetry import metrics
 from ac_telemetry.api import create_app
 from ac_telemetry.capture import CaptureService
 from ac_telemetry.detect import DetectService
-from ac_telemetry.settings import get_settings, load_settings
+from ac_telemetry.settings import get_settings, load_settings, normalize_backend
 from ac_telemetry.store import LapStore, SessionStore
 
 logging.basicConfig(
@@ -29,6 +30,12 @@ logger = logging.getLogger("ac_telemetry")
 # binds, and after bind must set Server.should_exit (custom handlers replace
 # uvicorn's default KeyboardInterrupt path).
 _shutdown = threading.Event()
+_watchdog_armed = threading.Event()
+
+# After first SIGINT/SIGTERM, force-exit if graceful shutdown cannot finish.
+# time.sleep in the watchdog releases the GIL so this can still fire while
+# another thread is inside a long OpenCV C call that periodically yields.
+DEFAULT_SHUTDOWN_WATCHDOG_SECONDS = 8.0
 
 
 def build(
@@ -79,8 +86,75 @@ def _stop_workers(detect: DetectService, capture: CaptureService) -> None:
         logger.debug("capture.stop during shutdown failed", exc_info=True)
 
 
+def needs_opencv(settings: Any) -> bool:
+    """True when capture or detect will import OpenCV during worker start."""
+    backend = normalize_backend(getattr(settings, "backend", "mock"))
+    if backend in ("file", "v4l2"):
+        return True
+    detect = getattr(settings, "detect", None)
+    if detect is None or not getattr(detect, "enabled", False):
+        return False
+    lap = getattr(detect, "lap_time", None)
+    reader = getattr(lap, "reader", "mock") if lap is not None else "mock"
+    return reader in ("template", "tesseract", "assetto_corsa")
+
+
+def preload_opencv_if_needed(settings: Any) -> float:
+    """Import cv2 on the main thread before binding HTTP.
+
+    On a low-RAM Pi, lazy ``import cv2`` inside the capture/detect worker after
+    bind can hold/starve the GIL for minutes (zram thrash). The OS port may
+    show LISTEN while ``/api/status`` and SIGINT cannot run. Paying the import
+    cost before ``server.run()`` keeps post-listen HTTP and Ctrl-C responsive;
+    ``VideoCapture.open`` stays deferred until after bind (still time-bounded).
+    """
+    if not needs_opencv(settings):
+        return 0.0
+    if _shutdown.is_set():
+        return 0.0
+    logger.info(
+        "Preloading OpenCV (backend=%s detect=%s)…",
+        normalize_backend(settings.backend),
+        settings.detect.lap_time.reader if settings.detect.enabled else "off",
+    )
+    t0 = time.monotonic()
+    try:
+        import cv2  # noqa: F401
+    except ImportError as exc:
+        # Worker start will surface the same failure with a richer message.
+        logger.warning("OpenCV preload failed: %s", exc)
+        return time.monotonic() - t0
+    elapsed = time.monotonic() - t0
+    logger.info("OpenCV preload finished in %.1fs", elapsed)
+    return elapsed
+
+
+def arm_shutdown_watchdog(seconds: float = DEFAULT_SHUTDOWN_WATCHDOG_SECONDS) -> None:
+    """Force ``os._exit`` if graceful shutdown stalls (OpenCV/GIL/zram)."""
+    if _watchdog_armed.is_set():
+        return
+    _watchdog_armed.set()
+    budget = max(1.0, float(seconds))
+
+    def _watch() -> None:
+        # sleep releases the GIL; poll so a clean exit can cancel naturally
+        # by process end (daemon thread) before the deadline.
+        deadline = time.monotonic() + budget
+        while time.monotonic() < deadline:
+            time.sleep(0.2)
+        if _shutdown.is_set():
+            logger.error(
+                "Shutdown watchdog expired after %.0fs — forcing exit",
+                budget,
+            )
+            os._exit(1)
+
+    threading.Thread(target=_watch, name="shutdown-watchdog", daemon=True).start()
+
+
 def main(argv: list[str] | None = None) -> None:
     _shutdown.clear()
+    _watchdog_armed.clear()
     parser = argparse.ArgumentParser(description="AC Telemetry service")
     parser.add_argument(
         "--config",
@@ -114,8 +188,6 @@ def main(argv: list[str] | None = None) -> None:
     settings_mod.get_settings.cache_clear()
     settings = load_settings(Path(args.config) if args.config else None)
     if args.backend:
-        from ac_telemetry.settings import normalize_backend
-
         settings.backend = normalize_backend(args.backend)
     if args.file_path:
         settings.file_path = args.file_path
@@ -128,8 +200,9 @@ def main(argv: list[str] | None = None) -> None:
     holders: dict[str, Any] = {"capture": None, "detect": None}
 
     # uvicorn runs lifespan startup *before* binding the listen socket. Start
-    # capture only after bind so OpenCV import / VideoCapture open cannot delay
-    # (or thrash away) the listening port on a low-RAM Pi.
+    # capture only after bind so VideoCapture.open cannot delay the listen
+    # socket. OpenCV itself is preloaded below (before run) so post-bind worker
+    # start does not starve the GIL on low-RAM boards.
     server_holder: dict[str, uvicorn.Server | None] = {"server": None}
 
     def _on_startup() -> None:
@@ -184,12 +257,13 @@ def main(argv: list[str] | None = None) -> None:
         except ValueError:
             name = str(signum)
         if _shutdown.is_set():
-            # Second Ctrl-C: do not wait on joins again.
+            # Second Ctrl-C: hard-exit (SystemExit can still stall under GIL).
             logger.warning("Second %s — forcing exit", name)
-            raise SystemExit(1)
+            os._exit(1)
         logger.info("Shutting down… (%s)", name)
         _shutdown.set()
         server.should_exit = True
+        arm_shutdown_watchdog(DEFAULT_SHUTDOWN_WATCHDOG_SECONDS)
         # Never join from a signal handler: capture may be inside a long OpenCV
         # import/open holding the GIL; blocking joins freeze Ctrl-C for minutes.
         try:
@@ -200,6 +274,10 @@ def main(argv: list[str] | None = None) -> None:
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
+
+    # Install handlers before preload so a stuck import still gets should_exit
+    # queued; watchdog arms only after the first signal is delivered.
+    preload_opencv_if_needed(settings)
 
     if _shutdown.is_set():
         logger.info("Shutdown requested during startup; not binding HTTP")

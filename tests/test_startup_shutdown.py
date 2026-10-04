@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,7 +17,34 @@ from ac_telemetry.capture import (
     FrameSource,
     _v4l2_source_arg,
 )
+from ac_telemetry.main import needs_opencv, preload_opencv_if_needed
 from ac_telemetry.settings import CaptureProfile, load_settings
+
+
+def test_needs_opencv_for_file_v4l2_and_template_detect() -> None:
+    mock_detect = SimpleNamespace(
+        enabled=True, lap_time=SimpleNamespace(reader="mock")
+    )
+    assert needs_opencv(SimpleNamespace(backend="mock", detect=mock_detect)) is False
+    assert needs_opencv(SimpleNamespace(backend="file", detect=mock_detect)) is True
+    assert needs_opencv(SimpleNamespace(backend="v4l2", detect=mock_detect)) is True
+    template_detect = SimpleNamespace(
+        enabled=True, lap_time=SimpleNamespace(reader="template")
+    )
+    assert (
+        needs_opencv(SimpleNamespace(backend="mock", detect=template_detect)) is True
+    )
+    assert needs_opencv(
+        SimpleNamespace(backend="mock", detect=SimpleNamespace(enabled=False))
+    ) is False
+
+
+def test_preload_opencv_skipped_for_mock() -> None:
+    settings = SimpleNamespace(
+        backend="mock",
+        detect=SimpleNamespace(enabled=True, lap_time=SimpleNamespace(reader="mock")),
+    )
+    assert preload_opencv_if_needed(settings) == 0.0
 
 
 def test_v4l2_source_arg_maps_dev_path_and_digits() -> None:
