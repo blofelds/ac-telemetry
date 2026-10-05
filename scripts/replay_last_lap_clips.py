@@ -5,7 +5,8 @@ Replays each clip through the same template reader + DetectService._handle_readi
 path as live (ROI / templates / threshold from config). Compares:
 
   before  — min_lap_ms=30000, last_lap_stable_ms=0   (#24 / main)
-  after   — min_lap_ms=60000, last_lap_stable_ms=2500 (#25)
+  after   — min_lap_ms=45000, last_lap_stable_ms=2500,
+            last_lap_early_window_ms=60000, last_lap_early_stable_ms=4000 (#25)
 
 Card clips in this stint are only ~0.6–3s long, so raw PTS replay cannot show
 mid-lap extras after the 30s gate re-opens. Pass --pad-midlap to hold the
@@ -46,7 +47,11 @@ DEFAULT_CARD = Path.home() / "ac-telemetry-testdata/pi-stint-20261004/card"
 
 
 def _make_service(
-    min_lap_ms: int, last_lap_stable_ms: int
+    min_lap_ms: int,
+    last_lap_stable_ms: int,
+    *,
+    last_lap_early_window_ms: int = 0,
+    last_lap_early_stable_ms: int = 0,
 ) -> tuple[DetectService, list[dict[str, Any]]]:
     settings = load_settings()
     settings.detect.enabled = True
@@ -55,6 +60,8 @@ def _make_service(
     settings.detect.lap_time.mode = "last_lap"
     settings.detect.lap_time.min_lap_ms = min_lap_ms
     settings.detect.lap_time.last_lap_stable_ms = last_lap_stable_ms
+    settings.detect.lap_time.last_lap_early_window_ms = last_lap_early_window_ms
+    settings.detect.lap_time.last_lap_early_stable_ms = last_lap_early_stable_ms
     settings.detect.lap_time.templates_dir = "templates/lap_time_digits/ac_720p_pi"
     settings.detect.lap_time.match_threshold = 0.50
     settings.detect.debug_dump.enabled = False
@@ -163,9 +170,19 @@ def _pad_midlap(
 
 
 def _replay(
-    events: list[tuple[float, int | None]], min_lap_ms: int, last_lap_stable_ms: int
+    events: list[tuple[float, int | None]],
+    min_lap_ms: int,
+    last_lap_stable_ms: int,
+    *,
+    last_lap_early_window_ms: int = 0,
+    last_lap_early_stable_ms: int = 0,
 ) -> list[str]:
-    detect, recorded = _make_service(min_lap_ms, last_lap_stable_ms)
+    detect, recorded = _make_service(
+        min_lap_ms,
+        last_lap_stable_ms,
+        last_lap_early_window_ms=last_lap_early_window_ms,
+        last_lap_early_stable_ms=last_lap_early_stable_ms,
+    )
     mono = {"t": 0.0}
     real = time.monotonic
     time.monotonic = lambda: mono["t"]  # type: ignore[assignment]
@@ -225,7 +242,13 @@ def main() -> int:
         if args.pad_midlap:
             events, dominant, variants = _pad_midlap(events, seq)
         before = _replay(events, 30_000, 0)
-        after = _replay(events, 60_000, 2_500)
+        after = _replay(
+            events,
+            45_000,
+            2_500,
+            last_lap_early_window_ms=60_000,
+            last_lap_early_stable_ms=4_000,
+        )
         rows.append(
             {
                 "clip": clip.name,
