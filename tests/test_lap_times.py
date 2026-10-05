@@ -299,8 +299,8 @@ def test_last_lap_stable_hold_blocks_brief_flicker_after_gate(
 ) -> None:
     """After min_lap opens, a short-lived distinct OCR value must not CSV-write."""
     detect, recorded = _last_lap_service(
-        min_lap_ms=30_000,
-        last_lap_stable_ms=3_000,
+        min_lap_ms=60_000,
+        last_lap_stable_ms=2_500,
         debounce_reads=2,
     )
     mono = {"t": 0.0}
@@ -324,8 +324,8 @@ def test_last_lap_stable_hold_allows_real_change_after_gap(
 ) -> None:
     """Real LAST that holds ≥ last_lap_stable_ms records when wall gap ≥ min_lap."""
     detect, recorded = _last_lap_service(
-        min_lap_ms=30_000,
-        last_lap_stable_ms=3_000,
+        min_lap_ms=60_000,
+        last_lap_stable_ms=2_500,
         debounce_reads=2,
     )
     mono = {"t": 0.0}
@@ -345,15 +345,15 @@ def test_last_lap_stable_hold_allows_close_consecutive_values(
 ) -> None:
     """Hundredths-apart real laps still both record (no value-proximity reject)."""
     detect, recorded = _last_lap_service(
-        min_lap_ms=30_000,
-        last_lap_stable_ms=3_000,
+        min_lap_ms=60_000,
+        last_lap_stable_ms=2_500,
         debounce_reads=2,
     )
     mono = {"t": 0.0}
     monkeypatch.setattr(time, "monotonic", lambda: mono["t"])
 
     _hold_stable(detect, 100_000, mono, hold_s=3.0)
-    mono["t"] = 60.0
+    mono["t"] = 65.0
     _hold_stable(detect, 100_050, mono, hold_s=3.0)
     assert len(recorded) == 2
     assert abs(recorded[1]["lap_time_ms"] - recorded[0]["lap_time_ms"]) == 50
@@ -366,11 +366,12 @@ def test_last_lap_stint_gated_extras_pattern(
 
     CSV Δt proved min_lap_ms=30000 allowed 2:21.490 (+85s) and a later
     thousandths flicker; brief holds must not become rows, while the real
-    third LAST that stays put still records.
+    third LAST that stays put still records. Defaults now use min_lap_ms=60000
+    + last_lap_stable_ms=2500 — same acceptance shape for this timeline.
     """
     detect, recorded = _last_lap_service(
-        min_lap_ms=30_000,
-        last_lap_stable_ms=3_000,
+        min_lap_ms=60_000,
+        last_lap_stable_ms=2_500,
         debounce_reads=2,
     )
     mono = {"t": 0.0}
@@ -403,6 +404,39 @@ def test_last_lap_stint_gated_extras_pattern(
     assert [r["lap_time_ms"] for r in recorded] == [67_111, 141_430, 67_538]
 
 
+def test_last_lap_card_long_midlap_lookalike_blocked(
+    monkeypatch: Any,
+) -> None:
+    """Card-long 123100 pattern: sustained mid-lap lookalike after ~53s.
+
+    After exact ``1:03.201``, OCR held ``1:08.201`` for ~3.5s at +53.5s — enough
+    for last_lap_stable_ms under the old 30s wall gate (false extra). With
+    min_lap_ms=60000 that mid-lap write is blocked; the next real LAST at +69.5s
+    that holds still records. No value-Δ reject.
+    """
+    detect, recorded = _last_lap_service(
+        min_lap_ms=60_000,
+        last_lap_stable_ms=2_500,
+        debounce_reads=2,
+    )
+    mono = {"t": 0.0}
+    monkeypatch.setattr(time, "monotonic", lambda: mono["t"])
+
+    _hold_stable(detect, 63_201, mono, hold_s=3.0)  # 1:03.201
+    assert [r["lap_time_ms"] for r in recorded] == [63_201]
+
+    # Mid-lap lookalike (3→8 in seconds) holds longer than stable_ms but inside
+    # the 60s wall gap — must not become a CSV row.
+    mono["t"] = 53.5
+    _hold_stable(detect, 68_201, mono, hold_s=3.5)  # 1:08.201
+    assert len(recorded) == 1
+
+    # Real next LAST after ≥ min_lap wall gap.
+    mono["t"] = 69.5
+    _hold_stable(detect, 63_654, mono, hold_s=2.5)  # 1:03.654
+    assert [r["lap_time_ms"] for r in recorded] == [63_201, 63_654]
+
+
 def test_last_lap_clip_ocr_midlap_flicker_fixture(monkeypatch: Any) -> None:
     """Regression from card clip 125659 OCR + session-like mid-lap timing.
 
@@ -433,7 +467,7 @@ def test_last_lap_clip_ocr_midlap_flicker_fixture(monkeypatch: Any) -> None:
 
     # #25: same OCR timeline — brief flicker must not write.
     detect25, rec25 = _last_lap_service(
-        min_lap_ms=30_000, last_lap_stable_ms=3_000, debounce_reads=2
+        min_lap_ms=60_000, last_lap_stable_ms=2_500, debounce_reads=2
     )
     mono["t"] = 0.0
     _hold_stable(detect25, dominant, mono, hold_s=3.0)

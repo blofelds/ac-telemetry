@@ -351,10 +351,11 @@ class DetectService:
             # New distinct last-lap value → record it (skip the initial 0:00 seed).
             # Gate on wall-clock since last CSV write (≥ min_lap_ms) so OCR flicker
             # within one real lap cannot spam rows. Also require the new text to
-            # hold for last_lap_stable_ms — on long laps the 30s gate re-opens
-            # while HUD LAST is unchanged, and brief distinct OCR still commits.
-            # Do NOT reject close lap *values* — real consecutive laps can differ
-            # by only tens of ms.
+            # hold for last_lap_stable_ms — after the wall gate re-opens while HUD
+            # LAST is unchanged, brief distinct OCR still commits without a hold.
+            # Failed OCR reads do not reset the candidate timer (soft MJPEG often
+            # has sparse successes of a real held LAST). Do NOT reject close lap
+            # *values* — real consecutive laps can differ by only tens of ms.
             if record_ms > 0 and record_ms != self.state.last_recorded_time_ms:
                 if not self._last_lap_wall_clock_ok(detect):
                     # Leave _prev_stable_ms unset so we retry once the gate opens.

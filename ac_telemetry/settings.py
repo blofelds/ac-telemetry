@@ -70,13 +70,18 @@ class LapTimeDetectSettings(BaseModel):
     # Mock only: how often a synthetic completed lap appears.
     mock_interval_seconds: float = 45.0
     # last_lap: min wall-clock ms between CSV writes (blocks OCR flicker spam).
-    # current_timer: ignore short segments when detecting a reset.
-    min_lap_ms: int = 30_000
+    # Real driven laps are typically ≥ ~1 minute; 60s blocks mid-lap lookalike
+    # OCR that survives last_lap_stable_ms after the old 30s gate re-opened.
+    # Short-lap tracks may lower this in config. current_timer: ignore short
+    # segments when detecting a reset.
+    min_lap_ms: int = 60_000
     # last_lap only: new LAST text must hold this many ms before the first CSV
     # write. min_lap_ms alone is not enough on long laps — OCR can invent a
-    # distinct value every ≥30s while the HUD is unchanged. Real consecutive
-    # LAST updates that stay put still record when the wall gap is ≥ min_lap_ms.
-    last_lap_stable_ms: int = 3_000
+    # distinct value after the wall gate re-opens while the HUD is unchanged.
+    # Real consecutive LAST updates that stay put still record when the wall
+    # gap is ≥ min_lap_ms. Default 2500 pairs with min_lap_ms=60000 on card-long
+    # masters (3000 over-filters some real near-GT commits there).
+    last_lap_stable_ms: int = 2_500
     reset_slack_ms: int = 5_000
     # template / assetto_corsa only — digit PNGs (see templates/lap_time_digits/).
     templates_dir: str = "templates/lap_time_digits/ac_720p"
