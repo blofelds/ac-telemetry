@@ -351,11 +351,13 @@ class DetectService:
             # New distinct last-lap value → record it (skip the initial 0:00 seed).
             # Gate on wall-clock since last CSV write (≥ min_lap_ms) so OCR flicker
             # within one real lap cannot spam rows. Also require the new text to
-            # hold for last_lap_stable_ms — after the wall gate re-opens while HUD
-            # LAST is unchanged, brief distinct OCR still commits without a hold.
-            # Failed OCR reads do not reset the candidate timer (soft MJPEG often
-            # has sparse successes of a real held LAST). Do NOT reject close lap
-            # *values* — real consecutive laps can differ by only tens of ms.
+            # hold long enough (base last_lap_stable_ms, or last_lap_early_stable_ms
+            # while the gap is still below last_lap_early_window_ms) — after the
+            # wall gate re-opens while HUD LAST is unchanged, brief distinct OCR
+            # still commits without a hold. Failed OCR reads do not reset the
+            # candidate timer (soft MJPEG often has sparse successes of a real
+            # held LAST). Do NOT reject close lap *values* — real consecutive
+            # laps can differ by only tens of ms.
             if record_ms > 0 and record_ms != self.state.last_recorded_time_ms:
                 if not self._last_lap_wall_clock_ok(detect):
                     # Leave _prev_stable_ms unset so we retry once the gate opens.
@@ -427,9 +429,24 @@ class DetectService:
         elapsed_ms = (time.monotonic() - self._last_lap_record_mono) * 1000.0
         return elapsed_ms >= min_lap_ms
 
+    def _last_lap_required_hold_ms(self, detect: DetectSettings) -> int:
+        """Hold ms required for the current wall-gap (base vs early-window boost)."""
+        base = max(0, int(detect.lap_time.last_lap_stable_ms))
+        early_window = max(0, int(detect.lap_time.last_lap_early_window_ms))
+        early_hold = max(0, int(detect.lap_time.last_lap_early_stable_ms))
+        if (
+            early_window > 0
+            and early_hold > base
+            and self._last_lap_record_mono is not None
+        ):
+            gap_ms = (time.monotonic() - self._last_lap_record_mono) * 1000.0
+            if gap_ms < early_window:
+                return early_hold
+        return base
+
     def _last_lap_stable_hold_ok(self, detect: DetectSettings) -> bool:
         """True if the candidate LAST text has been held long enough to accept."""
-        hold_ms = max(0, int(detect.lap_time.last_lap_stable_ms))
+        hold_ms = self._last_lap_required_hold_ms(detect)
         if hold_ms <= 0:
             return True
         if self._candidate_stable_mono is None:

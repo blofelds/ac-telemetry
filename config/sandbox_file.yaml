@@ -72,8 +72,10 @@ detect:
     reader: template
     mode: last_lap
     mock_interval_seconds: 45
-    min_lap_ms: 60000
+    min_lap_ms: 45000
     last_lap_stable_ms: 2500
+    last_lap_early_window_ms: 60000
+    last_lap_early_stable_ms: 4000
     reset_slack_ms: 5000
     templates_dir: templates/lap_time_digits/ac_720p_pi
     match_threshold: 0.50
