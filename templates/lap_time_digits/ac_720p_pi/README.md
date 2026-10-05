@@ -17,7 +17,9 @@ from VLC without documenting the risk (`1↔7` / `3↔9` / `5↔6` lookalikes).
 | `5.png` | `5` | `ac-detect-dump-20261001-221758` | Span `[25,36]`, GT `1:35.113` |
 | `6.png` | `6` | `ac-detect-dump-20261001-235208` | Split glued `[39,61]` at x=50; y clipped `<14` |
 | `7.png` | `7` | `ac-detect-dump-20261001-234819` | Span `[46,54]`, GT `1:10.375` |
+| `7b.png` | `7` | card-long `20261005-123100` GT `1:18.795` | Soft-domain variant (median); letter suffix = same label |
 | `8.png` | `8` | `ac-detect-dump-20261001-231449` | Thousandths span `[53,64]` |
+| `8b.png` | `8` | card-long `20261005-123100` GT `1:18.795` | Soft-domain variant (median); fixes `8→9` on soft LAST |
 | `9.png` | `9` | `ac-detect-dump-20261001-231449` | Tenths span `[34,45]` |
 | `colon.png` | `:` | `ac-detect-dump-20261001-232108` | Tight color-ROI (2×10); midtone |
 | `period.png` | `.` | `ac-detect-dump-20261001-232108` | Tight color-ROI (3×2); midtone |
@@ -28,7 +30,15 @@ from VLC without documenting the risk (`1↔7` / `3↔9` / `5↔6` lookalikes).
   `135113` on dump `221758`; `234492` on dump `000013`; `107960` on dump
   `20261002-002656` after span recovery).
 - **Digit span recovery** absorbs multi-column 1-ink bridges (severed `7` top
-  bar) and splits oversized glued runs at digit-pitch valleys (`9`+`6`).
+  bar), merges a single-column 1-ink gap between narrow spans (split `7`),
+  extends a narrow stem into an orphaned 1-ink top bar, and splits oversized
+  glued runs at digit-pitch valleys (`9`+`6`).
+- **Soft variants** (`Nb.png`) keep the primary canvas from `0–9.png` and take
+  the best match score per label — covers soft capture-card LAST without
+  expanding every probe.
+- **Lookalike margin reject** fails closed when top-2 digit scores are a known
+  soft-capture confusable (`3↔8`, `5↔8`, `8↔9`) within a small score margin,
+  so ambiguous mid-lap crops do not hold as a wrong stable LAST.
 - **Separator recovery** loads midtone `colon.png` / `period.png` at `V≥100`,
   matches them in the expected `M:SS.mmm` gaps (digit mask stays `V≥150`), and
   falls back to digit-soup normalize (`107960` → `1:07.960`). Not soft-MJPEG
