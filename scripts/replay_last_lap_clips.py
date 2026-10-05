@@ -5,7 +5,7 @@ Replays each clip through the same template reader + DetectService._handle_readi
 path as live (ROI / templates / threshold from config). Compares:
 
   before  — min_lap_ms=30000, last_lap_stable_ms=0   (#24 / main)
-  after   — min_lap_ms=30000, last_lap_stable_ms=3000 (#25)
+  after   — min_lap_ms=60000, last_lap_stable_ms=2500 (#25)
 
 Card clips in this stint are only ~0.6–3s long, so raw PTS replay cannot show
 mid-lap extras after the 30s gate re-opens. Pass --pad-midlap to hold the
@@ -225,7 +225,7 @@ def main() -> int:
         if args.pad_midlap:
             events, dominant, variants = _pad_midlap(events, seq)
         before = _replay(events, 30_000, 0)
-        after = _replay(events, 30_000, 3_000)
+        after = _replay(events, 60_000, 2_500)
         rows.append(
             {
                 "clip": clip.name,

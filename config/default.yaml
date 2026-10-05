@@ -103,12 +103,15 @@ detect:
     mode: last_lap
     mock_interval_seconds: 45
     # last_lap: min wall-clock ms between CSV writes (OCR flicker gate).
-    # Necessary but not sufficient on long laps — see last_lap_stable_ms.
+    # ~1 minute matches typical driven-lap spacing; 30s still left a mid-lap
+    # window where lookalike OCR that held ≥ last_lap_stable_ms became extras.
+    # Short-lap tracks may lower this. See also last_lap_stable_ms.
     # current_timer: ignore short segments when detecting a reset.
-    min_lap_ms: 30000
+    min_lap_ms: 60000
     # last_lap: new LAST text must hold this long before the first CSV write.
     # Blocks brief distinct OCR after the min_lap gate re-opens mid-lap.
-    last_lap_stable_ms: 3000
+    # 2500 pairs with min_lap_ms=60000 on card-long 20261005 masters.
+    last_lap_stable_ms: 2500
     reset_slack_ms: 5000
     # Same path as glyphs_dir — live Pi HDMI crops (full 0–9 + : / .; see set README).
     # Prefer over ac_720p_capture on soft MJPEG (lookalike 1↔7 / 3↔9 / 5↔6).
