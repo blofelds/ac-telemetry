@@ -80,6 +80,9 @@ Profiles are **named** (`pi2b`, `pi5`) so board limits are not sprinkled through
 - Capture health: up, running, FPS, last frame age, error/frame counters
 - Sessions: started/ended/open
 - Detect: latency gauge, failure/drop/lap counters, `signal_lap_time_ms`
+- Detect liveness on `/api/status` (`detect.health`): thread alive + last-tick
+  age (stale threshold ≈ 4× `detect.fps` interval). Independent of
+  `capture.running` so a crashed detect-loop still shows `degraded`.
 
 ## Networking
 

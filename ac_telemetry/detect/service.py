@@ -20,6 +20,10 @@ from ac_telemetry.settings import DetectSettings, Settings
 
 logger = logging.getLogger(__name__)
 
+# Coarse stall threshold: last tick older than this × detect interval → degraded.
+# ~3–5× covers scheduling jitter without false alarms at default 2 fps.
+STALE_TICK_MULTIPLIER = 4.0
+
 
 @dataclass
 class LiveLapState:
@@ -87,6 +91,8 @@ class DetectService:
     _candidate_stable_mono: float | None = field(default=None, init=False, repr=False)
     _last_dump: LastDetectDump = field(default_factory=LastDetectDump, init=False, repr=False)
     _failures_since_dump: int = field(default=0, init=False, repr=False)
+    # Monotonic time of last completed detect-loop iteration (tick or drop).
+    _last_tick_mono: float | None = field(default=None, init=False, repr=False)
 
     def start(self) -> None:
         detect = self.settings.detect
@@ -165,15 +171,70 @@ class DetectService:
         with self._dump_lock:
             return self._last_dump.annotated_png()
 
+    def is_alive(self) -> bool:
+        """True when the detect-loop thread is still running."""
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    def liveness(self) -> dict[str, Any]:
+        """Detect-loop health for ``/api/status`` (distinct from capture.running).
+
+        ``health`` is one of ``ok`` / ``degraded`` / ``stopped``. When detect is
+        disabled in config, health is ``stopped`` with ``enabled=false`` so the
+        UI can show a muted off state rather than a crash alarm.
+        """
+        detect = self.settings.detect
+        enabled = bool(detect.enabled)
+        thread = self._thread
+        alive = thread is not None and thread.is_alive()
+        interval = 1.0 / max(detect.fps, 0.1)
+        stale_after_s = interval * STALE_TICK_MULTIPLIER
+
+        last_tick_mono = self._last_tick_mono
+        if last_tick_mono is None:
+            last_tick_age_s: float | None = None
+        else:
+            last_tick_age_s = round(max(0.0, time.monotonic() - last_tick_mono), 3)
+
+        if not enabled:
+            health = "stopped"
+        elif alive:
+            if (
+                last_tick_age_s is not None
+                and last_tick_age_s > stale_after_s
+            ):
+                health = "degraded"
+            else:
+                health = "ok"
+        elif thread is not None:
+            # Thread was started but is no longer alive (crash / exit).
+            health = "degraded"
+        else:
+            health = "stopped"
+
+        return {
+            "enabled": enabled,
+            "running": bool(enabled and alive),
+            "alive": alive,
+            "last_tick_age_s": last_tick_age_s,
+            "stale_after_s": round(stale_after_s, 3) if enabled else None,
+            "health": health,
+        }
+
+    def _mark_tick(self) -> None:
+        self._last_tick_mono = time.monotonic()
+
     def _run(self) -> None:
         detect = self.settings.detect
         interval = 1.0 / max(detect.fps, 0.1)
+        self._mark_tick()
         while not self._stop.is_set():
             tick = time.monotonic()
             if detect.drop_under_pressure and self._busy.is_set():
                 self.state.drops += 1
                 if self.on_metrics is not None:
                     self.on_metrics(dropped=True)
+                self._mark_tick()
                 self._sleep_remaining(tick, interval)
                 continue
             self._busy.set()
@@ -181,6 +242,7 @@ class DetectService:
                 self._tick(detect)
             finally:
                 self._busy.clear()
+            self._mark_tick()
             self._sleep_remaining(tick, interval)
 
     def _sleep_remaining(self, tick: float, interval: float) -> None:

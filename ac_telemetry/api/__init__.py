@@ -417,6 +417,19 @@ def create_app(
         payload["session"] = current
         payload["session_id"] = current["session_id"] if current else None
         payload["lap"] = _lap_payload()
+        # Detect liveness is separate from capture.running so a dead detect
+        # thread still surfaces as degraded while Capture stays green.
+        if detect is not None:
+            payload["detect"] = detect.liveness()
+        else:
+            payload["detect"] = {
+                "enabled": False,
+                "running": False,
+                "alive": False,
+                "last_tick_age_s": None,
+                "stale_after_s": None,
+                "health": "stopped",
+            }
         return payload
 
     @app.get("/api/laps/current")
