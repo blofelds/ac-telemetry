@@ -1,4 +1,11 @@
 {
   "name": "ac-telemetry",
-  "install": "python3 -m venv .venv\n. .venv/bin/activate\npip install -U pip\npip install -e \".[capture,dev]\"\npip install pytest"
+  "install": "set -euo pipefail\nsudo apt-get update\nsudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv tesseract-ocr\npython3 -m venv .venv\n.venv/bin/python -m pip install --upgrade pip\n.venv/bin/python -m pip install -e '.[capture,ocr,dev]' 'pytest>=8.3'\n",
+  "start": "set -euo pipefail\nif curl -fsS --max-time 2 http://127.0.0.1:8741/health >/dev/null 2>&1; then\n  echo \"ac-telemetry already healthy on :8741\"\n  exit 0\nfi\nexec .venv/bin/ac-telemetry --backend mock --host 0.0.0.0 --port 8741\n",
+  "ports": [
+    {
+      "name": "ac-telemetry",
+      "port": 8741
+    }
+  ]
 }
