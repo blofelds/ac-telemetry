@@ -105,6 +105,11 @@ Empty displayed/recorded time usually means one of:
 - Also: `lap.last_error` on `/api/laps/current` or `/api/debug/info`.
 - Watch `ac_telemetry_detect_failures_total` and `ac_telemetry_detect_drops_total` on `/metrics`.
 - If drops climb, lower `detect.fps` or keep using `mock` until the Pi has headroom.
+- **Detect tile / `detect.health` on `/api/status`:** Capture can stay green while
+  the detect-loop dies. Check `detect.alive`, `detect.last_tick_age_s`, and
+  `detect.health` (`ok` / `degraded` / `stopped`). Amber **degraded** means the
+  thread is dead or ticks are stale; muted **off** means detect is disabled in
+  config (not a crash).
 
 ### Collect a detect dump (preferred for `no glyphs matched in ROI`)
 

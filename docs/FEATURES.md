@@ -19,6 +19,10 @@ Honest inventory of what ships now versus what is planned.
 ### Health and capture metrics
 
 - `GET /health`, `GET /metrics`, `GET /api/status`.
+- `/api/status` includes `detect` liveness (`enabled`, `running`, `alive`,
+  `last_tick_age_s`, `health`: `ok` / `degraded` / `stopped`) so a dead or
+  stalled detect loop is visible even when capture `running` stays true.
+  Disabled detect reports `stopped` with `enabled=false` (not a crash alarm).
 
 ### Manual sessions (CSV)
 
@@ -39,6 +43,9 @@ Honest inventory of what ships now versus what is planned.
 
 - Lap strip (displayed / last recorded / lap # / reader).
 - Session start/end + history + capture status.
+- **Detect** tile (separate from Capture): green `ok` while the loop ticks,
+  amber `degraded` when the thread is dead or last tick is stale (~4× detect
+  interval), muted `off` when detect is disabled in config.
 - **ROI debug** at `/debug` — overlay + crop JPEGs from the capture handoff; **Download full-res ROI screenshot** (`/api/debug/rois.jpg`) for measuring pixels locally; **Save glyph** (`POST /api/debug/glyphs/save`) to cut real AC digit/colon/period PNGs from the live ROI; shows `last_error`.
 
 ### Ops sketch
