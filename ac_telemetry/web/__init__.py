@@ -13,6 +13,7 @@ STATUS_HTML = """<!DOCTYPE html>
       --text: #e8eef4;
       --muted: #8b9aab;
       --ok: #3dba7a;
+      --warn: #d4a017;
       --bad: #d35a5a;
       --accent: #4a8fd4;
       --line: #2a3542;
@@ -102,7 +103,9 @@ STATUS_HTML = """<!DOCTYPE html>
     .stat .value { font-size: 1.05rem; margin-top: 0.2rem; font-variant-numeric: tabular-nums; }
     .dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; margin-right: 0.35rem; }
     .dot.on { background: var(--ok); }
+    .dot.warn { background: var(--warn); }
     .dot.off { background: var(--bad); }
+    .dot.muted { background: var(--muted); }
     .history {
       list-style: none;
       margin: 0;
@@ -165,6 +168,7 @@ STATUS_HTML = """<!DOCTYPE html>
   <h2>Capture</h2>
   <div class="grid">
     <div class="stat"><div class="label">Capture</div><div class="value" id="running">…</div></div>
+    <div class="stat"><div class="label">Detect</div><div class="value" id="detect-health">…</div></div>
     <div class="stat"><div class="label">FPS</div><div class="value" id="fps">…</div></div>
     <div class="stat"><div class="label">Backend</div><div class="value" id="backend">…</div></div>
     <div class="stat"><div class="label">Profile</div><div class="value" id="profile">…</div></div>
@@ -241,6 +245,20 @@ STATUS_HTML = """<!DOCTYPE html>
         .replace(/"/g, "&quot;");
     }
 
+    function renderDetectHealth(det) {
+      // Distinct from Capture: capture.running can stay true while detect dies.
+      if (!det || det.enabled === false) {
+        return '<span class="dot muted"></span>off';
+      }
+      if (det.health === "ok") {
+        return '<span class="dot on"></span>ok';
+      }
+      if (det.health === "degraded") {
+        return '<span class="dot warn"></span>degraded';
+      }
+      return '<span class="dot off"></span>stopped';
+    }
+
     async function refreshStatus() {
       try {
         const r = await fetch("/api/status");
@@ -249,6 +267,7 @@ STATUS_HTML = """<!DOCTYPE html>
         $("running").innerHTML =
           '<span class="dot ' + (on ? "on" : "off") + '"></span>' +
           (on ? "running" : "stopped");
+        $("detect-health").innerHTML = renderDetectHealth(d.detect);
         $("backend").textContent = d.backend;
         $("profile").textContent = d.profile;
         $("fps").textContent =
@@ -263,6 +282,7 @@ STATUS_HTML = """<!DOCTYPE html>
           (lap.enabled === false ? "off" : (lap.reader || "—"));
       } catch (e) {
         $("running").textContent = "unreachable";
+        $("detect-health").textContent = "unreachable";
       }
     }
 
