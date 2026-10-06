@@ -83,6 +83,8 @@ class DetectService:
     _prev_stable_ms: int | None = field(default=None, init=False, repr=False)
     # Wall-clock of last successful last_lap CSV write (monotonic seconds).
     _last_lap_record_mono: float | None = field(default=None, init=False, repr=False)
+    # When the current candidate LAST text first appeared (monotonic seconds).
+    _candidate_stable_mono: float | None = field(default=None, init=False, repr=False)
     _last_dump: LastDetectDump = field(default_factory=LastDetectDump, init=False, repr=False)
     _failures_since_dump: int = field(default=0, init=False, repr=False)
 
@@ -141,6 +143,7 @@ class DetectService:
         self._stable_ms = None
         self._stable_count = 0
         self._last_lap_record_mono = None
+        self._candidate_stable_mono = None
 
     def get_last_dump(self) -> LastDetectDump:
         """Return the in-memory last detect dump (may be empty)."""
@@ -328,6 +331,7 @@ class DetectService:
             self._stable_text = reading.text
             self._stable_ms = reading.lap_time_ms
             self._stable_count = 1
+            self._candidate_stable_mono = time.monotonic()
 
         if self._stable_count < max(1, detect.debounce_reads):
             return
@@ -346,11 +350,20 @@ class DetectService:
         if mode == "last_lap":
             # New distinct last-lap value → record it (skip the initial 0:00 seed).
             # Gate on wall-clock since last CSV write (≥ min_lap_ms) so OCR flicker
-            # within one real lap cannot spam rows. Do NOT reject close lap *values*
-            # — real consecutive laps can differ by only tens of ms.
+            # within one real lap cannot spam rows. Also require the new text to
+            # hold long enough (base last_lap_stable_ms, or last_lap_early_stable_ms
+            # while the gap is still below last_lap_early_window_ms) — after the
+            # wall gate re-opens while HUD LAST is unchanged, brief distinct OCR
+            # still commits without a hold. Failed OCR reads do not reset the
+            # candidate timer (soft MJPEG often has sparse successes of a real
+            # held LAST). Do NOT reject close lap *values* — real consecutive
+            # laps can differ by only tens of ms.
             if record_ms > 0 and record_ms != self.state.last_recorded_time_ms:
                 if not self._last_lap_wall_clock_ok(detect):
                     # Leave _prev_stable_ms unset so we retry once the gate opens.
+                    return
+                if not self._last_lap_stable_hold_ok(detect):
+                    # Same: retry while the candidate keeps holding.
                     return
                 should_record = True
         else:  # current_timer
@@ -415,3 +428,28 @@ class DetectService:
         min_lap_ms = max(0, int(detect.lap_time.min_lap_ms))
         elapsed_ms = (time.monotonic() - self._last_lap_record_mono) * 1000.0
         return elapsed_ms >= min_lap_ms
+
+    def _last_lap_required_hold_ms(self, detect: DetectSettings) -> int:
+        """Hold ms required for the current wall-gap (base vs early-window boost)."""
+        base = max(0, int(detect.lap_time.last_lap_stable_ms))
+        early_window = max(0, int(detect.lap_time.last_lap_early_window_ms))
+        early_hold = max(0, int(detect.lap_time.last_lap_early_stable_ms))
+        if (
+            early_window > 0
+            and early_hold > base
+            and self._last_lap_record_mono is not None
+        ):
+            gap_ms = (time.monotonic() - self._last_lap_record_mono) * 1000.0
+            if gap_ms < early_window:
+                return early_hold
+        return base
+
+    def _last_lap_stable_hold_ok(self, detect: DetectSettings) -> bool:
+        """True if the candidate LAST text has been held long enough to accept."""
+        hold_ms = self._last_lap_required_hold_ms(detect)
+        if hold_ms <= 0:
+            return True
+        if self._candidate_stable_mono is None:
+            return False
+        elapsed_ms = (time.monotonic() - self._candidate_stable_mono) * 1000.0
+        return elapsed_ms >= hold_ms

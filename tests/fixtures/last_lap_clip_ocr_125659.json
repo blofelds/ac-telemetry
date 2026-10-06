@@ -1,0 +1,53 @@
+{
+  "source_clip": "20261004-125659_card_1280x720.mjpeg",
+  "stint": "pi-stint-20261004",
+  "roi": {"x": 92, "y": 287, "width": 84, "height": 17},
+  "templates": "templates/lap_time_digits/ac_720p_pi",
+  "match_threshold": 0.5,
+  "note": "OCR change-points from card-native MJPEG via template reader (no video binary). Smoking-gun clip: HUD LAST stable ~3:01.259; OCR oscillates thousandths. Used for mid-lap flicker regression after min_lap gate re-opens.",
+  "clip_duration_s": 2.44,
+  "dominant_ms": 181299,
+  "flicker_variants_ms": [181233, 181239, 181293],
+  "ocr_changes": [
+    {"t": 0.0, "ms": null},
+    {"t": 0.16, "ms": 541299},
+    {"t": 0.2, "ms": 481269},
+    {"t": 0.24, "ms": 541299},
+    {"t": 0.36, "ms": 541259},
+    {"t": 0.4, "ms": 541299},
+    {"t": 0.44, "ms": 181233},
+    {"t": 0.48, "ms": 181293},
+    {"t": 0.52, "ms": 181233},
+    {"t": 0.56, "ms": 181293},
+    {"t": 0.6, "ms": 181299},
+    {"t": 0.64, "ms": 181233},
+    {"t": 0.68, "ms": 181239},
+    {"t": 0.72, "ms": 181233},
+    {"t": 0.76, "ms": 181293},
+    {"t": 0.84, "ms": 181233},
+    {"t": 0.88, "ms": 181293},
+    {"t": 0.92, "ms": 181239},
+    {"t": 0.96, "ms": 181299},
+    {"t": 1.72, "ms": 181239},
+    {"t": 1.76, "ms": 181299},
+    {"t": 1.88, "ms": 181293},
+    {"t": 1.92, "ms": 181299},
+    {"t": 1.96, "ms": 181293},
+    {"t": 2.0, "ms": 181299},
+    {"t": 2.28, "ms": 181293},
+    {"t": 2.32, "ms": 181299},
+    {"t": 2.36, "ms": 181239},
+    {"t": 2.4, "ms": 181299}
+  ],
+  "session_6aea35251c54": {
+    "driven_gt": ["1:07.717", "2:21.430", "1:07.538"],
+    "csv_writes_with_min_lap_only": [
+      "1:07.111",
+      "2:21.430",
+      "2:21.490",
+      "1:07.996",
+      "1:07.696"
+    ],
+    "dt_s_between_writes": [null, 135, 85, 31, 61]
+  }
+}
