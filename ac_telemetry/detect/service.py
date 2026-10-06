@@ -189,7 +189,10 @@ class DetectService:
             return
         deadline = time.monotonic() + sleep_for
         while not self._stop.is_set() and time.monotonic() < deadline:
-            time.sleep(min(0.05, deadline - time.monotonic()))
+            # Clamp: between the deadline check and sleep, mono can overrun
+            # (ValueError: sleep length must be non-negative).
+            remaining = deadline - time.monotonic()
+            time.sleep(max(0.0, min(0.05, remaining)))
 
     def _tick(self, detect: DetectSettings) -> None:
         assert self._reader is not None
