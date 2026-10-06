@@ -1,0 +1,4 @@
+{
+  "name": "ac-telemetry",
+  "install": "python3 -m venv .venv\n. .venv/bin/activate\npip install -U pip\npip install -e \".[capture,dev]\"\npip install pytest"
+}
