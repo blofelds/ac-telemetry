@@ -97,7 +97,7 @@ def test_pi_templates_rematch_live_dump_digits() -> None:
     assert matcher.missing_digits == []
     assert ":" in matcher.templates and "." in matcher.templates
     raw, diag = matcher.read_symbols_with_diagnostics(image)
-    digits = [g["chosen"] for g in diag["glyphs"] if g["chosen"] not in ".:"]
+    digits = [g["chosen"] for g in diag["glyphs"] if g["chosen"] not in (None, ".", ":")]
     assert digits == ["1", "3", "5", "1", "1", "3"], digits
     assert raw == "1:35.113"
     assert raw != "796719"
@@ -126,7 +126,7 @@ def test_pi_templates_rematch_dump_2_34_492_digits() -> None:
     matcher = DigitTemplateMatcher(TEMPLATES_PI)
     assert matcher.missing_digits == []
     raw, diag = matcher.read_symbols_with_diagnostics(image)
-    digits = [g["chosen"] for g in diag["glyphs"] if g["chosen"] not in ".:"]
+    digits = [g["chosen"] for g in diag["glyphs"] if g["chosen"] not in (None, ".", ":")]
     assert digits == ["2", "3", "4", "4", "9", "2"], digits
     assert raw == "2:34.492"
 
@@ -154,7 +154,7 @@ def test_pi_templates_rematch_dump_1_07_960_span_recovery() -> None:
     matcher = DigitTemplateMatcher(TEMPLATES_PI)
     assert matcher.missing_digits == []
     raw, diag = matcher.read_symbols_with_diagnostics(image)
-    digits = [g["chosen"] for g in diag["glyphs"] if g["chosen"] not in ".:"]
+    digits = [g["chosen"] for g in diag["glyphs"] if g["chosen"] not in (None, ".", ":")]
     seps = [g for g in diag["glyphs"] if g.get("role") == "separator"]
     assert digits == ["1", "0", "7", "9", "6", "0"], digits
     assert raw == "1:07.960"
@@ -257,6 +257,102 @@ def test_column_spans_skips_single_col_bridge() -> None:
     mask[:, 13:23] = 255
     raw = [(2, 12), (13, 23)]
     assert _absorb_thin_bridges(mask, raw) == raw
+
+
+def test_column_spans_merge_narrow_single_bridge_and_leading_topbar() -> None:
+    """Split ``7`` body/stem + orphaned 1-ink top bar rejoin for soft capture."""
+    import numpy as np
+
+    from ac_telemetry.detect.template_matcher import (
+        _absorb_leading_one_ink,
+        _absorb_narrow_single_bridge,
+    )
+
+    # Narrow stub | 1-ink gap | narrow stem → one digit-sized span
+    mask = np.zeros((12, 24), np.uint8)
+    mask[:, 4:7] = 255
+    mask[0, 7] = 255
+    mask[:, 8:11] = 255
+    merged = _absorb_narrow_single_bridge(mask, [(4, 7), (8, 11)])
+    assert merged == [(4, 11)], merged
+
+    # Full-width digits with a 1-ink speck must stay split
+    wide = np.zeros((12, 30), np.uint8)
+    wide[:, 2:12] = 255
+    wide[5, 12] = 255
+    wide[:, 13:23] = 255
+    assert _absorb_narrow_single_bridge(wide, [(2, 12), (13, 23)]) == [
+        (2, 12),
+        (13, 23),
+    ]
+
+    # Orphaned top bar (count==1) left of a narrow stem
+    top = np.zeros((12, 20), np.uint8)
+    top[0, 3:8] = 255  # five 1-ink cols
+    top[:, 8:11] = 255  # stem
+    extended = _absorb_leading_one_ink(top, [(8, 11)])
+    assert extended == [(3, 11)], extended
+
+
+def test_pi_templates_load_soft_variants() -> None:
+    """``7b.png`` / ``8b.png`` share labels; canvas stays primary-sized."""
+    from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
+
+    matcher = DigitTemplateMatcher(TEMPLATES_PI)
+    assert len(matcher.templates["7"]) >= 2
+    assert len(matcher.templates["8"]) >= 2
+    # Primary canvas for ac_720p_pi digits is 12×11 after pad.
+    assert matcher.canvas == (12, 11)
+    assert all(t.shape == matcher.canvas for t in matcher.templates["8"])
+
+
+def test_pi_templates_card_long_soft_1_18_795() -> None:
+    """Card-long soft LAST ``1:18.795`` — span recovery + soft ``7b``/``8b``.
+
+    Baseline Pi templates alone read this crop as ``1:19.195`` (``8→9``,
+    severed ``7→1``). Soft variants + ``7`` span recovery restore GT.
+    """
+    cv2 = _cv2()
+    path = FIXTURES / "ac_720p_pi_card_long_1_18_795.png"
+    assert path.is_file(), path
+    image = cv2.imread(str(path))
+    assert image is not None
+    reader = TemplateLapTimeReader(TEMPLATES_PI)
+    reading = reader.read(image)
+    assert reading.ok, reading.error
+    assert reading.text == "1:18.795"
+    assert reading.lap_time_ms == 78_795
+
+
+def test_lookalike_margin_rejects_tight_3_vs_8() -> None:
+    """Synthetic: ``8`` barely beating ``3`` must fail closed."""
+    import numpy as np
+
+    from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
+
+    matcher = DigitTemplateMatcher(TEMPLATES_PI)
+    # Build a probe from the primary ``3`` template ink (already padded).
+    glyph3 = (matcher.templates["3"][0] > 0).astype(np.uint8) * 255
+    # Trim to ink like live probes.
+    from ac_telemetry.detect.template_matcher import _trim_to_ink
+
+    trimmed = _trim_to_ink(glyph3)
+    assert trimmed is not None
+    label, scores, _thr = matcher.match_glyph_detailed(trimmed)
+    # Clear ``3`` must still win.
+    assert label == "3", (label, scores[:3])
+
+    # Force a near-tie: report reject helper directly.
+    fake = [
+        {"label": "8", "score": 0.689},
+        {"label": "3", "score": 0.688},
+    ]
+    assert matcher._lookalike_margin_reject("8", fake) is True
+    fake_clear = [
+        {"label": "3", "score": 0.77},
+        {"label": "8", "score": 0.45},
+    ]
+    assert matcher._lookalike_margin_reject("3", fake_clear) is False
 
 
 def test_template_reader_empty_roi() -> None:

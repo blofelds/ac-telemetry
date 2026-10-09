@@ -17,6 +17,22 @@ _MATCH_THRESHOLD = 0.50
 _DIGIT_V_MIN = 150
 _SEP_V_MIN = 100
 _S_MAX = 80
+# Reject digit labels when the runner-up is a known soft-capture lookalike
+# within this score margin. Pair set is the card-long failure modes only
+# (broader pairs like 5↔6 / 6↔8 break proven Pi dump rematches).
+_LOOKALIKE_MARGIN = 0.02
+_LOOKALIKE_MARGIN_TIGHT = 0.03  # 5↔8 / 8↔9 hundredths on soft capture
+_LOOKALIKE_PAIRS = frozenset(
+    {
+        frozenset(("3", "8")),
+        frozenset(("5", "8")),
+        frozenset(("8", "9")),
+    }
+)
+_LOOKALIKE_PAIR_MARGINS = {
+    frozenset(("5", "8")): _LOOKALIKE_MARGIN_TIGHT,
+    frozenset(("8", "9")): _LOOKALIKE_MARGIN_TIGHT,
+}
 
 
 def white_mask(roi_bgr: Any, *, v_min: int = _DIGIT_V_MIN) -> Any:
@@ -65,11 +81,17 @@ def _column_spans(
     Recovery (cheap column projection only — Pi 2B friendly):
     1. Absorb contiguous 1-ink bridges into the *following* span (``7`` top
        bar severed by the ``>= 2`` rule).
-    2. Split spans wider than ``~1.5×`` a digit at digit-width valleys
+    2. Merge a single-column 1-ink gap between two *narrow* spans (split ``7``
+       body / stem) when the merge stays digit-sized.
+    3. Extend a narrow stem left into a contiguous 1-ink top-bar run (orphaned
+       ``7`` bar left of a ``1``-like stem on soft capture).
+    4. Split spans wider than ``~1.5×`` a digit at digit-width valleys
        (glued ``9``+``6`` blobs).
     """
     spans = _raw_column_spans(mask)
     spans = _absorb_thin_bridges(mask, spans)
+    spans = _absorb_narrow_single_bridge(mask, spans)
+    spans = _absorb_leading_one_ink(mask, spans)
     typical = canvas_width if canvas_width and canvas_width > 0 else None
     spans = _split_oversized_spans(mask, spans, typical_width=typical)
     return spans
@@ -119,6 +141,76 @@ def _absorb_thin_bridges(
             out.append((prev_end, end))
         else:
             out.append((start, end))
+    return out
+
+
+def _absorb_narrow_single_bridge(
+    mask: Any, spans: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Merge a 1-column ``count==1`` gap between two narrow spans.
+
+    Soft card/MJPEG ``7`` glyphs sometimes split into a short left stub and a
+    stem with a single 1-ink column between them. The multi-column bridge
+    absorb leaves that gap alone (by design — a speck between full-width
+    digits must not glue ``5``+``9``). When *both* sides are narrow and the
+    merge stays digit-sized, rejoin them so ``7`` can match.
+    """
+    if len(spans) < 2:
+        return spans
+    counts = (mask > 0).sum(axis=0)
+    out: list[tuple[int, int]] = [spans[0]]
+    for start, end in spans[1:]:
+        prev_start, prev_end = out[-1]
+        bridge = range(prev_end, start)
+        prev_w = prev_end - prev_start
+        cur_w = end - start
+        if (
+            len(bridge) == 1
+            and int(counts[prev_end]) == 1
+            and prev_w <= 5
+            and cur_w <= 5
+            and (end - prev_start) <= 12
+        ):
+            out[-1] = (prev_start, end)
+        else:
+            out.append((start, end))
+    return out
+
+
+def _absorb_leading_one_ink(
+    mask: Any,
+    spans: list[tuple[int, int]],
+    *,
+    max_extend: int = 8,
+) -> list[tuple[int, int]]:
+    """Extend a narrow stem left into a contiguous 1-ink top-bar run.
+
+    When the ``7`` top bar sits entirely in ``count==1`` columns with a zero
+    gap before the stem, thin-bridge absorb never sees a bridge between two
+    ``count>=2`` spans. Pull those 1-ink columns into the following narrow
+    stem (≥2 columns, no zero holes) so the restored glyph can match ``7``
+    instead of a bare ``1``.
+    """
+    if not spans:
+        return spans
+    counts = (mask > 0).sum(axis=0)
+    out: list[tuple[int, int]] = []
+    for start, end in spans:
+        if end - start <= 5:
+            x = start - 1
+            extended = start
+            ones = 0
+            while x >= 0 and (start - x) <= max_extend and int(counts[x]) == 1:
+                ones += 1
+                extended = x
+                x -= 1
+            if ones >= 2:
+                prev_end = out[-1][1] if out else 0
+                extended = max(extended, prev_end)
+                if extended < start:
+                    out.append((extended, end))
+                    continue
+        out.append((start, end))
     return out
 
 
@@ -290,9 +382,13 @@ class DigitTemplateMatcher:
         self.template_dir = Path(template_dir)
         self.match_threshold = float(match_threshold)
         self.templates = self._load_templates(self.template_dir)
-        # Infer canvas from any loaded digit template.
+        # Infer canvas from any loaded digit template (first variant).
         sample = next(
-            (self.templates[d] for d in "0123456789" if d in self.templates),
+            (
+                self.templates[d][0]
+                for d in "0123456789"
+                if d in self.templates and self.templates[d]
+            ),
             None,
         )
         if sample is not None:
@@ -324,7 +420,10 @@ class DigitTemplateMatcher:
         """Same decision as ``match_glyph``, plus scored candidates for dumps.
 
         Match thresholds and separators are unchanged — this only retains the
-        ``TM_CCOEFF_NORMED`` floats that were previously discarded.
+        ``TM_CCOEFF_NORMED`` floats that were previously discarded. Digit wins
+        against a known lookalike within ``_LOOKALIKE_MARGIN`` (tighter for
+        ``5↔8`` / ``8↔9``) are rejected so ambiguous soft crops fail closed
+        instead of committing a wrong stable LAST.
         """
         digit_threshold = self.match_threshold
         digit, digit_scores = self._best_label(
@@ -333,6 +432,8 @@ class DigitTemplateMatcher:
             threshold=digit_threshold,
         )
         if digit is not None:
+            if self._lookalike_margin_reject(digit, digit_scores):
+                return None, digit_scores, digit_threshold
             return digit, digit_scores, digit_threshold
 
         h, w = int(glyph.shape[0]), int(glyph.shape[1])
@@ -358,6 +459,22 @@ class DigitTemplateMatcher:
             return heuristic, merged, sep_threshold
         return None, merged, digit_threshold
 
+    @staticmethod
+    def _lookalike_margin_reject(
+        chosen: str, scores: list[dict[str, Any]]
+    ) -> bool:
+        """True when ``chosen`` beats a lookalike by less than the pair margin."""
+        digit_scores = [row for row in scores if row["label"] in "0123456789"]
+        if len(digit_scores) < 2 or digit_scores[0]["label"] != chosen:
+            return False
+        second = digit_scores[1]
+        pair = frozenset((chosen, second["label"]))
+        if pair not in _LOOKALIKE_PAIRS:
+            return False
+        need = _LOOKALIKE_PAIR_MARGINS.get(pair, _LOOKALIKE_MARGIN)
+        margin = float(digit_scores[0]["score"]) - float(second["score"])
+        return margin < need
+
     def _best_label(
         self,
         glyph: Any,
@@ -371,16 +488,25 @@ class DigitTemplateMatcher:
         best: str | None = None
         best_score = float(threshold)
         for label in labels:
-            template = self.templates.get(label)
-            if template is None:
+            variants = self.templates.get(label) or []
+            if not variants:
                 continue
-            th, tw = int(template.shape[0]), int(template.shape[1])
-            probe = pad_glyph(glyph, th, tw).astype("float32")
-            if probe.shape[0] < th or probe.shape[1] < tw:
+            score = -1.0
+            for template in variants:
+                th, tw = int(template.shape[0]), int(template.shape[1])
+                probe = pad_glyph(glyph, th, tw).astype("float32")
+                if probe.shape[0] < th or probe.shape[1] < tw:
+                    continue
+                score = max(
+                    score,
+                    float(
+                        cv2.matchTemplate(
+                            probe, template, cv2.TM_CCOEFF_NORMED
+                        ).max()
+                    ),
+                )
+            if score < 0:
                 continue
-            score = float(
-                cv2.matchTemplate(probe, template, cv2.TM_CCOEFF_NORMED).max()
-            )
             scores.append({"label": label, "score": round(score, 4)})
             if score > best_score:
                 best_score = score
@@ -670,7 +796,7 @@ class DigitTemplateMatcher:
         return None, detail, -1.0
 
     @staticmethod
-    def _load_templates(template_dir: Path) -> dict[str, Any]:
+    def _load_templates(template_dir: Path) -> dict[str, list[Any]]:
         """Load digit PNGs and normalize to the same space as ROI probes.
 
         Save-glyph / VLC crops are midtone RGB on a dark pad. Live matching
@@ -678,20 +804,29 @@ class DigitTemplateMatcher:
         directly with ``matchTemplate`` mis-ranks lookalikes (0→8, 6→8) and
         fails thin separators. Binarize + trim + pad onto one canvas so probes
         and templates share geometry.
+
+        Filenames ``N.png`` are primary glyphs. Optional soft-domain variants
+        ``Nb.png``, ``Nc.png``, … (letter suffix) share the same label; the
+        best ``TM_CCOEFF_NORMED`` score among variants wins. Canvas size is
+        locked to primary ``0–9.png`` ink boxes so soft variants scale down
+        onto the live Pi set instead of expanding every probe.
         """
         import cv2
         import numpy as np
+        import re
 
         if not template_dir.is_dir():
             raise FileNotFoundError(
                 f"Digit templates not found: {template_dir}"
             )
 
-        raw: dict[str, Any] = {}
-        for digit in "0123456789":
-            path = template_dir / f"{digit}.png"
-            if not path.is_file():
+        primary: dict[str, Any] = {}
+        variants: dict[str, list[Any]] = {}
+        for path in sorted(template_dir.glob("*.png")):
+            match = re.fullmatch(r"([0-9])([a-z]*)", path.stem)
+            if match is None:
                 continue
+            label, suffix = match.group(1), match.group(2)
             image = cv2.imread(str(path), cv2.IMREAD_COLOR)
             if image is None:
                 raise ValueError(f"Unreadable digit template {path}")
@@ -701,9 +836,21 @@ class DigitTemplateMatcher:
                     f"Digit template {path} has no ink after white_mask; "
                     "re-crop a brighter glyph."
                 )
-            raw[digit] = trimmed
+            if suffix == "":
+                primary[label] = trimmed
+            else:
+                variants.setdefault(label, []).append(trimmed)
 
-        if not raw:
+        if not primary and not variants:
+            raise FileNotFoundError(
+                f"No digit templates under {template_dir}. "
+                "Need at least one of 0.png … 9.png."
+            )
+        # Prefer primary inventory; allow variant-only incomplete sets.
+        digit_source = primary if primary else {
+            d: variants[d][0] for d in variants if d in "0123456789"
+        }
+        if not digit_source:
             raise FileNotFoundError(
                 f"No digit templates under {template_dir}. "
                 "Need at least one of 0.png … 9.png."
@@ -719,16 +866,29 @@ class DigitTemplateMatcher:
             # Midtone live crops peak below digit V≥150; use sep cut on load.
             trimmed = _trim_to_ink(white_mask(image, v_min=_SEP_V_MIN))
             if trimmed is not None:
-                raw[label] = trimmed
+                primary[label] = trimmed
 
-        # Common canvas from digit ink boxes (separators are tiny).
-        digit_shapes = [raw[d].shape for d in "0123456789" if d in raw]
+        # Common canvas from *primary* digit ink boxes only.
+        digit_shapes = [
+            digit_source[d].shape for d in "0123456789" if d in digit_source
+        ]
         canvas_h = max(h for h, _w in digit_shapes)
         canvas_w = max(w for _h, w in digit_shapes)
-        return {
-            label: pad_glyph(glyph, canvas_h, canvas_w).astype(np.float32)
-            for label, glyph in raw.items()
-        }
+        out: dict[str, list[Any]] = {}
+        for label in set(primary) | set(variants) | set(digit_source):
+            glyphs: list[Any] = []
+            src = primary.get(label)
+            if src is None and label in digit_source:
+                src = digit_source[label]
+            if src is not None:
+                glyphs.append(pad_glyph(src, canvas_h, canvas_w).astype(np.float32))
+            for glyph in variants.get(label, []):
+                glyphs.append(
+                    pad_glyph(glyph, canvas_h, canvas_w).astype(np.float32)
+                )
+            if glyphs:
+                out[label] = glyphs
+        return out
 
 
 
