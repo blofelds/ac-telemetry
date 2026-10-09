@@ -295,15 +295,17 @@ def test_column_spans_merge_narrow_single_bridge_and_leading_topbar() -> None:
 
 
 def test_pi_templates_load_soft_variants() -> None:
-    """``7b.png`` / ``8b.png`` share labels; canvas stays primary-sized."""
+    """``5b`` / ``7b`` / ``8b`` / ``8c`` share labels; canvas stays primary-sized."""
     from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
 
     matcher = DigitTemplateMatcher(TEMPLATES_PI)
+    assert len(matcher.templates["5"]) >= 2
     assert len(matcher.templates["7"]) >= 2
-    assert len(matcher.templates["8"]) >= 2
+    assert len(matcher.templates["8"]) >= 3
     # Primary canvas for ac_720p_pi digits is 12×11 after pad.
     assert matcher.canvas == (12, 11)
     assert all(t.shape == matcher.canvas for t in matcher.templates["8"])
+    assert all(t.shape == matcher.canvas for t in matcher.templates["5"])
 
 
 def test_pi_templates_card_long_soft_1_18_795() -> None:
@@ -323,6 +325,39 @@ def test_pi_templates_card_long_soft_1_18_795() -> None:
     assert reading.text == "1:18.795"
     assert reading.lap_time_ms == 78_795
 
+
+def test_pi_templates_card_long_soft_1_03_081() -> None:
+    """Hundredths soft ``8`` that previously OCR’d as ``9`` → ``1:03.091``.
+
+    ``8c.png`` (median of those soft crops) restores GT ``1:03.081``.
+    """
+    cv2 = _cv2()
+    path = FIXTURES / "ac_720p_pi_card_long_1_03_081_soft.png"
+    assert path.is_file(), path
+    image = cv2.imread(str(path))
+    assert image is not None
+    reader = TemplateLapTimeReader(TEMPLATES_PI)
+    reading = reader.read(image)
+    assert reading.ok, reading.error
+    assert reading.text == "1:03.081"
+    assert reading.lap_time_ms == 63_081
+
+
+def test_pi_templates_card_long_soft_1_55_158() -> None:
+    """Seconds-units soft ``5`` that previously OCR’d as ``9`` → ``1:59.158``.
+
+    ``5b.png`` restores GT ``1:55.158`` on the sparse ``124252`` master crop.
+    """
+    cv2 = _cv2()
+    path = FIXTURES / "ac_720p_pi_card_long_1_55_158_soft.png"
+    assert path.is_file(), path
+    image = cv2.imread(str(path))
+    assert image is not None
+    reader = TemplateLapTimeReader(TEMPLATES_PI)
+    reading = reader.read(image)
+    assert reading.ok, reading.error
+    assert reading.text == "1:55.158"
+    assert reading.lap_time_ms == 115_158
 
 def test_lookalike_margin_rejects_tight_3_vs_8() -> None:
     """Synthetic: ``8`` barely beating ``3`` must fail closed."""
