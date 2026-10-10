@@ -5,8 +5,7 @@ Replays each clip through the same template reader + DetectService._handle_readi
 path as live (ROI / templates / threshold from config). Compares:
 
   before  — min_lap_ms=30000, last_lap_stable_ms=0   (#24 / main)
-  after   — min_lap_ms=45000, last_lap_stable_ms=2500,
-            last_lap_early_window_ms=60000, last_lap_early_stable_ms=4000 (#25)
+  after   — min_lap_ms=45000, last_lap_stable_ms=2500 (simplified prod)
 
 Card clips in this stint are only ~0.6–3s long, so raw PTS replay cannot show
 mid-lap extras after the 30s gate re-opens. Pass --pad-midlap to hold the
@@ -49,9 +48,6 @@ DEFAULT_CARD = Path.home() / "ac-telemetry-testdata/pi-stint-20261004/card"
 def _make_service(
     min_lap_ms: int,
     last_lap_stable_ms: int,
-    *,
-    last_lap_early_window_ms: int = 0,
-    last_lap_early_stable_ms: int = 0,
 ) -> tuple[DetectService, list[dict[str, Any]]]:
     settings = load_settings()
     settings.detect.enabled = True
@@ -60,8 +56,6 @@ def _make_service(
     settings.detect.lap_time.mode = "last_lap"
     settings.detect.lap_time.min_lap_ms = min_lap_ms
     settings.detect.lap_time.last_lap_stable_ms = last_lap_stable_ms
-    settings.detect.lap_time.last_lap_early_window_ms = last_lap_early_window_ms
-    settings.detect.lap_time.last_lap_early_stable_ms = last_lap_early_stable_ms
     settings.detect.lap_time.templates_dir = "templates/lap_time_digits/ac_720p_pi"
     settings.detect.lap_time.match_threshold = 0.50
     settings.detect.debug_dump.enabled = False
@@ -173,16 +167,8 @@ def _replay(
     events: list[tuple[float, int | None]],
     min_lap_ms: int,
     last_lap_stable_ms: int,
-    *,
-    last_lap_early_window_ms: int = 0,
-    last_lap_early_stable_ms: int = 0,
 ) -> list[str]:
-    detect, recorded = _make_service(
-        min_lap_ms,
-        last_lap_stable_ms,
-        last_lap_early_window_ms=last_lap_early_window_ms,
-        last_lap_early_stable_ms=last_lap_early_stable_ms,
-    )
+    detect, recorded = _make_service(min_lap_ms, last_lap_stable_ms)
     mono = {"t": 0.0}
     real = time.monotonic
     time.monotonic = lambda: mono["t"]  # type: ignore[assignment]
@@ -231,7 +217,7 @@ def main() -> int:
     mode = "pad_midlap" if args.pad_midlap else "raw_pts"
     print(f"mode={mode} card_dir={card_dir}")
     print(
-        f"{'clip':<42} {'dur':>6} {'#24 n':>5} {'#25 n':>5}  before → after"
+        f"{'clip':<42} {'dur':>6} {'#24 n':>5} {'prod n':>5}  before → after"
     )
     for clip in clips:
         seq, src_fps = _extract_ocr(clip)
@@ -242,13 +228,7 @@ def main() -> int:
         if args.pad_midlap:
             events, dominant, variants = _pad_midlap(events, seq)
         before = _replay(events, 30_000, 0)
-        after = _replay(
-            events,
-            45_000,
-            2_500,
-            last_lap_early_window_ms=60_000,
-            last_lap_early_stable_ms=4_000,
-        )
+        after = _replay(events, 45_000, 2_500)
         rows.append(
             {
                 "clip": clip.name,
@@ -257,7 +237,7 @@ def main() -> int:
                 "dominant": format_lap_time_ms(dominant) if dominant else None,
                 "variants": [format_lap_time_ms(v) for v in variants],
                 "before_24": before,
-                "after_25": after,
+                "after_prod": after,
             }
         )
         print(
