@@ -259,34 +259,12 @@ def test_column_spans_skips_single_col_bridge() -> None:
     assert _absorb_thin_bridges(mask, raw) == raw
 
 
-def test_column_spans_merge_narrow_single_bridge_and_leading_topbar() -> None:
-    """Split ``7`` body/stem + orphaned 1-ink top bar rejoin for soft capture."""
+def test_column_spans_leading_one_ink_restores_orphaned_7_topbar() -> None:
+    """Orphaned 1-ink ``7`` top bar left of a narrow stem rejoins for soft capture."""
     import numpy as np
 
-    from ac_telemetry.detect.template_matcher import (
-        _absorb_leading_one_ink,
-        _absorb_narrow_single_bridge,
-    )
+    from ac_telemetry.detect.template_matcher import _absorb_leading_one_ink
 
-    # Narrow stub | 1-ink gap | narrow stem → one digit-sized span
-    mask = np.zeros((12, 24), np.uint8)
-    mask[:, 4:7] = 255
-    mask[0, 7] = 255
-    mask[:, 8:11] = 255
-    merged = _absorb_narrow_single_bridge(mask, [(4, 7), (8, 11)])
-    assert merged == [(4, 11)], merged
-
-    # Full-width digits with a 1-ink speck must stay split
-    wide = np.zeros((12, 30), np.uint8)
-    wide[:, 2:12] = 255
-    wide[5, 12] = 255
-    wide[:, 13:23] = 255
-    assert _absorb_narrow_single_bridge(wide, [(2, 12), (13, 23)]) == [
-        (2, 12),
-        (13, 23),
-    ]
-
-    # Orphaned top bar (count==1) left of a narrow stem
     top = np.zeros((12, 20), np.uint8)
     top[0, 3:8] = 255  # five 1-ink cols
     top[:, 8:11] = 255  # stem
@@ -295,15 +273,17 @@ def test_column_spans_merge_narrow_single_bridge_and_leading_topbar() -> None:
 
 
 def test_pi_templates_load_soft_variants() -> None:
-    """``7b.png`` / ``8b.png`` share labels; canvas stays primary-sized."""
+    """``5b`` / ``7b`` / ``8b`` / ``8c`` share labels; canvas stays primary-sized."""
     from ac_telemetry.detect.template_matcher import DigitTemplateMatcher
 
     matcher = DigitTemplateMatcher(TEMPLATES_PI)
+    assert len(matcher.templates["5"]) >= 2
     assert len(matcher.templates["7"]) >= 2
-    assert len(matcher.templates["8"]) >= 2
+    assert len(matcher.templates["8"]) >= 3
     # Primary canvas for ac_720p_pi digits is 12×11 after pad.
     assert matcher.canvas == (12, 11)
     assert all(t.shape == matcher.canvas for t in matcher.templates["8"])
+    assert all(t.shape == matcher.canvas for t in matcher.templates["5"])
 
 
 def test_pi_templates_card_long_soft_1_18_795() -> None:
@@ -323,6 +303,39 @@ def test_pi_templates_card_long_soft_1_18_795() -> None:
     assert reading.text == "1:18.795"
     assert reading.lap_time_ms == 78_795
 
+
+def test_pi_templates_card_long_soft_1_03_081() -> None:
+    """Hundredths soft ``8`` that previously OCR’d as ``9`` → ``1:03.091``.
+
+    ``8c.png`` (median of those soft crops) restores GT ``1:03.081``.
+    """
+    cv2 = _cv2()
+    path = FIXTURES / "ac_720p_pi_card_long_1_03_081_soft.png"
+    assert path.is_file(), path
+    image = cv2.imread(str(path))
+    assert image is not None
+    reader = TemplateLapTimeReader(TEMPLATES_PI)
+    reading = reader.read(image)
+    assert reading.ok, reading.error
+    assert reading.text == "1:03.081"
+    assert reading.lap_time_ms == 63_081
+
+
+def test_pi_templates_card_long_soft_1_55_158() -> None:
+    """Seconds-units soft ``5`` that previously OCR’d as ``9`` → ``1:59.158``.
+
+    ``5b.png`` restores GT ``1:55.158`` on the sparse ``124252`` master crop.
+    """
+    cv2 = _cv2()
+    path = FIXTURES / "ac_720p_pi_card_long_1_55_158_soft.png"
+    assert path.is_file(), path
+    image = cv2.imread(str(path))
+    assert image is not None
+    reader = TemplateLapTimeReader(TEMPLATES_PI)
+    reading = reader.read(image)
+    assert reading.ok, reading.error
+    assert reading.text == "1:55.158"
+    assert reading.lap_time_ms == 115_158
 
 def test_lookalike_margin_rejects_tight_3_vs_8() -> None:
     """Synthetic: ``8`` barely beating ``3`` must fail closed."""

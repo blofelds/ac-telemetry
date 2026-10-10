@@ -81,16 +81,13 @@ def _column_spans(
     Recovery (cheap column projection only — Pi 2B friendly):
     1. Absorb contiguous 1-ink bridges into the *following* span (``7`` top
        bar severed by the ``>= 2`` rule).
-    2. Merge a single-column 1-ink gap between two *narrow* spans (split ``7``
-       body / stem) when the merge stays digit-sized.
-    3. Extend a narrow stem left into a contiguous 1-ink top-bar run (orphaned
+    2. Extend a narrow stem left into a contiguous 1-ink top-bar run (orphaned
        ``7`` bar left of a ``1``-like stem on soft capture).
-    4. Split spans wider than ``~1.5×`` a digit at digit-width valleys
+    3. Split spans wider than ``~1.5×`` a digit at digit-width valleys
        (glued ``9``+``6`` blobs).
     """
     spans = _raw_column_spans(mask)
     spans = _absorb_thin_bridges(mask, spans)
-    spans = _absorb_narrow_single_bridge(mask, spans)
     spans = _absorb_leading_one_ink(mask, spans)
     typical = canvas_width if canvas_width and canvas_width > 0 else None
     spans = _split_oversized_spans(mask, spans, typical_width=typical)
@@ -139,39 +136,6 @@ def _absorb_thin_bridges(
             and all(int(counts[x]) == 1 for x in bridge)
         ):
             out.append((prev_end, end))
-        else:
-            out.append((start, end))
-    return out
-
-
-def _absorb_narrow_single_bridge(
-    mask: Any, spans: list[tuple[int, int]]
-) -> list[tuple[int, int]]:
-    """Merge a 1-column ``count==1`` gap between two narrow spans.
-
-    Soft card/MJPEG ``7`` glyphs sometimes split into a short left stub and a
-    stem with a single 1-ink column between them. The multi-column bridge
-    absorb leaves that gap alone (by design — a speck between full-width
-    digits must not glue ``5``+``9``). When *both* sides are narrow and the
-    merge stays digit-sized, rejoin them so ``7`` can match.
-    """
-    if len(spans) < 2:
-        return spans
-    counts = (mask > 0).sum(axis=0)
-    out: list[tuple[int, int]] = [spans[0]]
-    for start, end in spans[1:]:
-        prev_start, prev_end = out[-1]
-        bridge = range(prev_end, start)
-        prev_w = prev_end - prev_start
-        cur_w = end - start
-        if (
-            len(bridge) == 1
-            and int(counts[prev_end]) == 1
-            and prev_w <= 5
-            and cur_w <= 5
-            and (end - prev_start) <= 12
-        ):
-            out[-1] = (prev_start, end)
         else:
             out.append((start, end))
     return out
