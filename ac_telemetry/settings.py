@@ -19,6 +19,7 @@ BackendName = Literal["mock", "v4l2", "file", "video"]
 ProfileName = Literal["pi2b", "pi5"]
 LapTimeReaderName = Literal["mock", "tesseract", "template", "assetto_corsa"]
 LapTimeMode = Literal["last_lap", "current_timer"]
+RoiTeeFormat = Literal["jpeg_seq", "mjpeg", "avi"]
 
 
 def normalize_backend(name: str) -> BackendName:
@@ -117,6 +118,25 @@ class DetectSettings(BaseModel):
     )
 
 
+class AccuracySettings(BaseModel):
+    """Optional stint LAST accuracy tooling — default **off** (Pi-safe).
+
+    Owned conceptually by ``ac_telemetry.accuracy``; model lives here so core
+    settings load does not import that package. Rip-out: delete this class +
+    ``Settings.accuracy`` + YAML ``accuracy:`` block + accuracy package +
+    thin wiring in ``main`` / ``api`` / optional detect ``on_sample`` hook.
+    """
+
+    enabled: bool = False
+    with_session: bool = True
+    roi_tee_format: RoiTeeFormat = "jpeg_seq"
+    jpeg_quality: int = Field(default=70, ge=40, le=95)
+    ocr_log: bool = True
+    roi_tee: bool = True
+    queue_size: int = Field(default=2, ge=1, le=8)
+    subdir: str = "accuracy"
+
+
 class Settings(BaseSettings):
     """Runtime settings from YAML + environment overrides."""
 
@@ -150,6 +170,11 @@ class Settings(BaseSettings):
     # Bound VideoCapture/file open so a missing HDMI signal or stuck V4L2
     # driver cannot block the capture thread (and Ctrl-C joins) for minutes.
     capture_open_timeout_seconds: float = 15.0
+
+    # Optional stint accuracy tooling (ROI tee + OCR log + GT scores).
+    # Default off — see ac_telemetry/accuracy/ and docs/STINT_ACCURACY.md.
+    # Rip-out: delete accuracy package + this field + YAML block + main/api wiring.
+    accuracy: AccuracySettings = Field(default_factory=AccuracySettings)
 
     # Filled from YAML profiles after load
     profiles: dict[str, CaptureProfile] = Field(default_factory=dict)
@@ -234,6 +259,46 @@ def _parse_detect(raw: dict[str, Any]) -> DetectSettings:
     )
 
 
+def _parse_accuracy(raw: dict[str, Any] | None) -> AccuracySettings:
+    """Parse top-level ``accuracy:`` YAML + env overrides (default off)."""
+    import os
+
+    body = raw if isinstance(raw, dict) else {}
+    kwargs: dict[str, Any] = {}
+    for key in (
+        "enabled",
+        "with_session",
+        "roi_tee_format",
+        "jpeg_quality",
+        "ocr_log",
+        "roi_tee",
+        "queue_size",
+        "subdir",
+    ):
+        if key in body:
+            kwargs[key] = body[key]
+    cfg = AccuracySettings(**kwargs)
+
+    def _env_bool(name: str) -> bool | None:
+        val = os.environ.get(name, "").strip().lower()
+        if val in ("1", "true", "yes", "on"):
+            return True
+        if val in ("0", "false", "no", "off"):
+            return False
+        return None
+
+    env_enabled = _env_bool("AC_TELEMETRY_ACCURACY_ENABLED")
+    if env_enabled is not None:
+        cfg = cfg.model_copy(update={"enabled": env_enabled})
+    env_tee = _env_bool("AC_TELEMETRY_ACCURACY_ROI_TEE")
+    if env_tee is not None:
+        cfg = cfg.model_copy(update={"roi_tee": env_tee})
+    env_log = _env_bool("AC_TELEMETRY_ACCURACY_OCR_LOG")
+    if env_log is not None:
+        cfg = cfg.model_copy(update={"ocr_log": env_log})
+    return cfg
+
+
 def _builtin_profiles() -> dict[str, CaptureProfile]:
     """Safe defaults if YAML is missing — Pi 2B caps stay foremost."""
     return {
@@ -272,6 +337,9 @@ def load_settings(config_path: Path | None = None) -> Settings:
     profiles.update(_parse_profiles(data))
     rois = _parse_rois(data)
     detect = _parse_detect(data)
+    accuracy = _parse_accuracy(
+        data.get("accuracy") if isinstance(data.get("accuracy"), dict) else {}
+    )
 
     # Env overrides via pydantic for scalar fields; re-apply after YAML base.
     env_settings = Settings()
@@ -348,6 +416,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
         profiles=profiles,
         rois=rois,
         detect=detect,
+        accuracy=accuracy,
     )
 
 

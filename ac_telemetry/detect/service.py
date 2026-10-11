@@ -74,6 +74,10 @@ class DetectService:
     on_metrics: Callable[..., None] | None = None
     # Optional capture identity for detect dumps (frames counter, age).
     get_capture_info: Callable[[], dict[str, Any]] | None = None
+    # Optional observer for each detect sample (e.g. accuracy OCR log / ROI tee).
+    # Must be cheap / non-blocking. None when unused — zero cost on the lap path.
+    # Does not participate in CSV write decisions. See ac_telemetry.accuracy.
+    on_sample: Callable[..., None] | None = None
     state: LiveLapState = field(default_factory=LiveLapState)
     _thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
@@ -359,6 +363,35 @@ class DetectService:
             self._last_dump.mask = mask_copy
             self._last_dump.captured_at = time.time()
 
+    def _emit_sample(
+        self,
+        reading: LapTimeReading,
+        *,
+        roi_img: Any | None,
+    ) -> None:
+        """Fire optional observer; never affects lap-write decisions."""
+        hook = self.on_sample
+        if hook is None:
+            return
+        try:
+            session_id = None
+            try:
+                session_id = self.get_session_id()
+            except Exception:  # noqa: BLE001
+                session_id = None
+            hook(
+                session_id=session_id,
+                mono_s=time.monotonic(),
+                wall_s=time.time(),
+                ok=bool(reading.ok and reading.lap_time_ms is not None),
+                text=reading.text or "",
+                lap_time_ms=reading.lap_time_ms,
+                error=reading.error or "",
+                roi_img=roi_img,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("on_sample observer failed", exc_info=True)
+
     def _handle_reading(
         self,
         detect: DetectSettings,
@@ -369,6 +402,8 @@ class DetectService:
     ) -> None:
         self.state.last_latency_seconds = round(latency, 4)
         self.state.last_detect_at = time.time()
+        # Observer runs before CSV logic and cannot influence should_record.
+        self._emit_sample(reading, roi_img=roi_img)
 
         if not reading.ok or reading.lap_time_ms is None:
             self.state.failures += 1

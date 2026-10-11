@@ -79,6 +79,22 @@ rois:
     width: 84
     height: 17
 
+# Optional stint LAST accuracy tooling (ROI tee + OCR sample log + GT scores).
+# DEFAULT OFF — no disk/CPU cost. Enable for >99% every-lap review stints.
+# Env: AC_TELEMETRY_ACCURACY_ENABLED=1
+# Docs: docs/STINT_ACCURACY.md — disable/remove instructions included.
+# Rip-out later: delete this block + ac_telemetry/accuracy/ + thin wiring
+# (Settings.accuracy, main lazy import, api mount, detect on_sample hook).
+accuracy:
+  enabled: false
+  with_session: true
+  roi_tee: true
+  ocr_log: true
+  roi_tee_format: jpeg_seq   # jpeg_seq | mjpeg | avi (OpenCV MJPG; no H.264)
+  jpeg_quality: 70
+  queue_size: 2
+  subdir: accuracy           # artefacts under {data_dir}/accuracy/{session_id}/
+
 # Detection runs on a separate thread at a much lower FPS than capture.
 detect:
   enabled: true
