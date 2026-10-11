@@ -371,6 +371,10 @@ class DetectService:
         self.state.last_detect_at = time.time()
 
         if not reading.ok or reading.lap_time_ms is None:
+            # No live on-screen reading — clear so the phone UI does not keep
+            # showing a stale Displayed figure from the last successful OCR.
+            self.state.displayed_time = None
+            self.state.displayed_time_ms = None
             self.state.failures += 1
             self.state.last_error = reading.error or "read failed"
             self._stash_dump(detect, reading, latency, roi_img=roi_img, ok=False)
