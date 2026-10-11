@@ -15,11 +15,13 @@ from VLC without documenting the risk (`1↔7` / `3↔9` / `5↔6` lookalikes).
 | `3.png` | `3` | `ac-detect-dump-20261001-221758` | Span `[13,24]`, GT `1:35.113` |
 | `4.png` | `4` | `ac-detect-dump-20261002-000013` | Isolated post-period `[45,55]`, GT `2:34.492` |
 | `5.png` | `5` | `ac-detect-dump-20261001-221758` | Span `[25,36]`, GT `1:35.113` |
+| `5b.png` | `5` | card-long `20261005-124252` GT `1:55.158` | Soft seconds-units variant (median of crops that previously OCR’d `9`); fixes sparse `5→9` → `1:59.158` |
 | `6.png` | `6` | `ac-detect-dump-20261001-235208` | Split glued `[39,61]` at x=50; y clipped `<14` |
 | `7.png` | `7` | `ac-detect-dump-20261001-234819` | Span `[46,54]`, GT `1:10.375` |
 | `7b.png` | `7` | card-long `20261005-123100` GT `1:18.795` | Soft-domain variant (median); letter suffix = same label |
 | `8.png` | `8` | `ac-detect-dump-20261001-231449` | Thousandths span `[53,64]` |
 | `8b.png` | `8` | card-long `20261005-123100` GT `1:18.795` | Soft-domain variant (median); fixes `8→9` on soft LAST |
+| `8c.png` | `8` | card-long `20261005-123100` GT `1:03.081` | Soft hundredths variant (median of crops that previously OCR’d `9`); fixes residual `1:03.081`→`1:03.091` |
 | `9.png` | `9` | `ac-detect-dump-20261001-231449` | Tenths span `[34,45]` |
 | `colon.png` | `:` | `ac-detect-dump-20261001-232108` | Tight color-ROI (2×10); midtone |
 | `period.png` | `.` | `ac-detect-dump-20261001-232108` | Tight color-ROI (3×2); midtone |
