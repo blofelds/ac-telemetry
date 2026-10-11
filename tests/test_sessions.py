@@ -68,6 +68,49 @@ def test_session_lifecycle_and_history(tmp_path: Path) -> None:
     assert "Monza" in text
 
 
+def test_status_html_tyre_spelling_and_last_session_prefill() -> None:
+    """Phone UI: British 'tyre' placeholder; car/track from newest /api/sessions."""
+    from ac_telemetry.web import STATUS_HTML
+
+    assert "tyre set" in STATUS_HTML
+    assert "tire set" not in STATUS_HTML
+    assert "prefillFromLastSession" in STATUS_HTML
+    assert "GET /api/sessions" in STATUS_HTML or "/api/sessions?limit=20" in STATUS_HTML
+
+
+def test_list_sessions_newest_first_exposes_last_car_track(tmp_path: Path) -> None:
+    """History order is the source for last-session car/track prefill."""
+    import time
+
+    client = _client(tmp_path)
+
+    first = client.post(
+        "/api/sessions",
+        json={"track": "Monza", "car": "Ferrari 488 GT3"},
+    )
+    assert first.status_code == 201
+    sid1 = first.json()["session"]["session_id"]
+    assert client.post(f"/api/sessions/{sid1}/end").status_code == 200
+    # started_at is second-precision ISO; wait so newest-first sort is stable.
+    time.sleep(1.05)
+
+    second = client.post(
+        "/api/sessions",
+        json={"track": "Spa", "car": "Porsche 911 GT3 R"},
+    )
+    assert second.status_code == 201
+    sid2 = second.json()["session"]["session_id"]
+    assert client.post(f"/api/sessions/{sid2}/end").status_code == 200
+
+    listed = client.get("/api/sessions")
+    assert listed.status_code == 200
+    sessions = listed.json()["sessions"]
+    assert len(sessions) == 2
+    assert sessions[0]["track"] == "Spa"
+    assert sessions[0]["car"] == "Porsche 911 GT3 R"
+    assert sessions[0]["session_id"] == sid2
+
+
 def test_metrics_include_session_counters(tmp_path: Path) -> None:
     # Fresh registry counters are process-global; just assert names exist after a start.
     client = _client(tmp_path)
