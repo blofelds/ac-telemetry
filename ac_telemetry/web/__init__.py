@@ -156,7 +156,7 @@ STATUS_HTML = """<!DOCTYPE html>
     <label for="car">Car</label>
     <input id="car" type="text" autocomplete="off" placeholder="e.g. Ferrari 488 GT3" />
     <label for="notes">Notes</label>
-    <textarea id="notes" placeholder="Optional — tire set, weather, setup…"></textarea>
+    <textarea id="notes" placeholder="Optional — tyre set, weather, setup…"></textarea>
     <div class="actions">
       <button type="button" class="btn-start" id="btn-start">Start session</button>
       <button type="button" class="btn-end" id="btn-end" disabled>End session</button>
@@ -213,6 +213,14 @@ STATUS_HTML = """<!DOCTYPE html>
       if (!$("track").value) $("track").value = session.track || "";
       if (!$("car").value) $("car").value = session.car || "";
       if (!$("notes").value) $("notes").value = session.notes || "";
+    }
+
+    function prefillFromLastSession(sessions) {
+      // Newest-first from GET /api/sessions — reuse history, no extra endpoint.
+      if (!sessions || !sessions.length) return;
+      const last = sessions[0];
+      if (!$("track").value) $("track").value = last.track || "";
+      if (!$("car").value) $("car").value = last.car || "";
     }
 
     function renderHistory(sessions) {
@@ -290,8 +298,10 @@ STATUS_HTML = """<!DOCTYPE html>
       try {
         const r = await fetch("/api/sessions?limit=20");
         const d = await r.json();
-        renderHistory(d.sessions || []);
+        const sessions = d.sessions || [];
+        renderHistory(sessions);
         if (d.current) renderCurrent(d.current);
+        else prefillFromLastSession(sessions);
       } catch (e) {
         $("history").innerHTML = "<li class=\\"meta\\">Could not load history.</li>";
       }
@@ -335,8 +345,10 @@ STATUS_HTML = """<!DOCTYPE html>
           return;
         }
         setMsg("Session ended.");
-        $("track").value = "";
-        $("car").value = "";
+        // Keep car/track for the next session; clear notes only.
+        const ended = d.session || {};
+        $("track").value = ended.track || "";
+        $("car").value = ended.car || "";
         $("notes").value = "";
         renderCurrent(null);
         refreshHistory();
