@@ -103,19 +103,14 @@ detect:
     mode: last_lap
     mock_interval_seconds: 45
     # last_lap: min wall-clock ms between CSV writes (OCR flicker gate).
-    # 45s allows real sub-60s laps; pair with last_lap_early_* so mid-lap
-    # lookalike OCR (~3.5s hold at +53.5s on card-long 123100) cannot commit
-    # in the early reopen window. Short-lap tracks may lower further.
+    # 45s allows real sub-60s laps. Short-lap tracks may lower further.
     # current_timer: ignore short segments when detecting a reset.
     min_lap_ms: 45000
-    # last_lap: new LAST text must hold this long before the first CSV write
-    # when the wall gap is already past last_lap_early_window_ms.
+    # last_lap: new LAST text must hold this long before the CSV write.
+    # Blocks brief mid-lap OCR flicker after the wall gate re-opens. Soft
+    # digit templates keep sustained lookalikes rare, so a single flat hold
+    # is enough (no early-window boost). No value-Δ gate.
     last_lap_stable_ms: 2500
-    # Stronger hold while wall gap is still < early_window (just past min_lap).
-    # 4000 blocks the 3.5s 1:08.201 lookalike; real LAST that holds ≥4s in a
-    # sub-60s gap still records. 0 disables. No value-Δ gate.
-    last_lap_early_window_ms: 60000
-    last_lap_early_stable_ms: 4000
     reset_slack_ms: 5000
     # Same path as glyphs_dir — live Pi HDMI crops (full 0–9 + : / .; see set README).
     # Prefer over ac_720p_capture on soft MJPEG (lookalike 1↔7 / 3↔9 / 5↔6).
