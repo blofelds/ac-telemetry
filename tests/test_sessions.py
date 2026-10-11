@@ -80,6 +80,8 @@ def test_status_html_tyre_spelling_and_last_session_prefill() -> None:
 
 def test_list_sessions_newest_first_exposes_last_car_track(tmp_path: Path) -> None:
     """History order is the source for last-session car/track prefill."""
+    import time
+
     client = _client(tmp_path)
 
     first = client.post(
@@ -89,6 +91,8 @@ def test_list_sessions_newest_first_exposes_last_car_track(tmp_path: Path) -> No
     assert first.status_code == 201
     sid1 = first.json()["session"]["session_id"]
     assert client.post(f"/api/sessions/{sid1}/end").status_code == 200
+    # started_at is second-precision ISO; wait so newest-first sort is stable.
+    time.sleep(1.05)
 
     second = client.post(
         "/api/sessions",
