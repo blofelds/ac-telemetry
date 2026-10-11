@@ -70,24 +70,16 @@ class LapTimeDetectSettings(BaseModel):
     # Mock only: how often a synthetic completed lap appears.
     mock_interval_seconds: float = 45.0
     # last_lap: min wall-clock ms between CSV writes (blocks OCR flicker spam).
-    # 45s allows real sub-60s driven laps; pair with last_lap_early_* so mid-lap
-    # lookalike OCR that holds ~3.5s just after the wall re-opens cannot commit.
-    # Short-lap tracks may lower this further in config. current_timer: ignore
-    # short segments when detecting a reset.
+    # 45s allows real sub-60s driven laps. Short-lap tracks may lower further.
+    # current_timer: ignore short segments when detecting a reset.
     min_lap_ms: int = 45_000
     # last_lap only: new LAST text must hold this many ms before the first CSV
     # write. min_lap_ms alone is not enough on long laps — OCR can invent a
     # distinct value after the wall gate re-opens while the HUD is unchanged.
     # Real consecutive LAST updates that stay put still record when the wall
-    # gap is ≥ min_lap_ms. Default 2500 pairs with the early-window boost below
-    # on card-long masters (flat 3000+ over-filters some near-GT commits there).
+    # gap is ≥ min_lap_ms. Soft-template OCR on card-long masters makes a
+    # single flat hold enough (no early-window boost).
     last_lap_stable_ms: int = 2_500
-    # last_lap only: when wall gap since the last CSV write is still below this
-    # (early reopen window), require last_lap_early_stable_ms instead of the
-    # base hold. Blocks card-long mid-lap lookalikes (~3.5s at +53.5s) under a
-    # 45s floor without a value-Δ gate. 0 disables the boost.
-    last_lap_early_window_ms: int = 60_000
-    last_lap_early_stable_ms: int = 4_000
     reset_slack_ms: int = 5_000
     # template / assetto_corsa only — digit PNGs (see templates/lap_time_digits/).
     templates_dir: str = "templates/lap_time_digits/ac_720p"
@@ -205,8 +197,6 @@ def _parse_detect(raw: dict[str, Any]) -> DetectSettings:
             "mock_interval_seconds",
             "min_lap_ms",
             "last_lap_stable_ms",
-            "last_lap_early_window_ms",
-            "last_lap_early_stable_ms",
             "reset_slack_ms",
             "templates_dir",
             "match_threshold",
