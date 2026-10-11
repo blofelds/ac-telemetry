@@ -158,8 +158,15 @@ Scrape `GET /metrics`. Lap-related names:
 - `ac_telemetry_laps_recorded_total`
 - `ac_telemetry_signal_lap_time_ms`
 
+## Stint accuracy review (optional)
+
+Default **off** — no ROI tee or OCR logging cost. Enable only for accuracy stints
+aimed at **>99%** LAST (review every lap). See [`STINT_ACCURACY.md`](STINT_ACCURACY.md)
+for enable/disable/remove, file layout, and GT → write% / ocr-sample% workflow.
+
 ## Next reading
 
 - [FEATURES.md](FEATURES.md) — delivered vs planned
+- [STINT_ACCURACY.md](STINT_ACCURACY.md) — optional every-lap ROI tee + scores
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Pi install, black frames, OCR misses
 - [ARCHITECTURE.md](ARCHITECTURE.md) — detect thread + CSV shape
