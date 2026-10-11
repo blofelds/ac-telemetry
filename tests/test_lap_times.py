@@ -301,6 +301,21 @@ def test_last_lap_same_value_does_not_rerecord(
     assert len(recorded) == 1
 
 
+def test_failed_ocr_clears_displayed_time() -> None:
+    """Displayed must not keep the last figure when there is no live OCR read."""
+    detect, _recorded = _last_lap_service(debounce_reads=1)
+    ok = LapTimeReading(ok=True, text="1:10.000", lap_time_ms=70_000)
+    detect._handle_reading(detect.settings.detect, ok, 0.01)
+    assert detect.state.displayed_time == "1:10.000"
+    assert detect.state.displayed_time_ms == 70_000
+
+    fail = LapTimeReading(ok=False, error="no digits")
+    detect._handle_reading(detect.settings.detect, fail, 0.01)
+    assert detect.state.displayed_time is None
+    assert detect.state.displayed_time_ms is None
+    assert detect.state.as_dict()["displayed_time"] is None
+
+
 def test_last_lap_stable_hold_blocks_brief_flicker_after_gate(
     monkeypatch: Any,
 ) -> None:
