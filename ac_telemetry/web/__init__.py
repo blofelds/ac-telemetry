@@ -32,10 +32,11 @@ STATUS_HTML = """<!DOCTYPE html>
       min-height: 100vh;
       padding: 1rem 1rem 2.5rem;
     }
-    h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 0.2rem; }
+    h1 { font-size: 1.4rem; font-weight: 600; margin: 1.75rem 0 0.2rem; }
     h2 { font-size: 0.85rem; font-weight: 600; text-transform: uppercase;
          letter-spacing: 0.05em; color: var(--muted); margin: 1.5rem 0 0.75rem; }
-    .sub { color: var(--muted); margin: 0 0 1.25rem; font-size: 0.92rem; }
+    .sub { color: var(--muted); margin: 0 0 0.35rem; font-size: 0.92rem; }
+    .sub + h2 { margin-top: 0.65rem; }
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -138,10 +139,6 @@ STATUS_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <h1>AC Telemetry</h1>
-  <p class="sub">Lap times · sessions · LAN only</p>
-
-  <h2>Lap time</h2>
   <div class="grid">
     <div class="stat"><div class="label">Displayed</div><div class="value" id="lap-display" style="color:var(--lap)">…</div></div>
     <div class="stat"><div class="label">Last recorded</div><div class="value" id="lap-recorded">…</div></div>
@@ -174,6 +171,8 @@ STATUS_HTML = """<!DOCTYPE html>
     <div class="stat"><div class="label">Profile</div><div class="value" id="profile">…</div></div>
   </div>
 
+  <h1>AC Telemetry</h1>
+  <p class="sub">Lap times · sessions · LAN only</p>
   <h2>History</h2>
   <ul class="history" id="history"><li class="meta">Loading…</li></ul>
 
