@@ -66,6 +66,7 @@ def create_app(
     *,
     lap_store: LapStore | None = None,
     detect: DetectService | None = None,
+    accuracy: Any | None = None,
     on_startup: Callable[[], None] | None = None,
     on_shutdown: Callable[[], None] | None = None,
 ) -> FastAPI:
@@ -92,6 +93,7 @@ def create_app(
     app.state.store = store
     app.state.lap_store = lap_store
     app.state.detect = detect
+    app.state.accuracy = accuracy
 
     def _lap_payload() -> dict[str, Any] | None:
         if detect is None:
@@ -491,9 +493,23 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if detect is not None:
             detect.reset_for_session()
+        # Optional accuracy tee/log — no-op when accuracy is None / disabled.
+        if accuracy is not None:
+            try:
+                accuracy.on_session_start(row["session_id"])
+            except Exception:  # noqa: BLE001
+                pass
         metrics.SESSIONS_STARTED.inc()
         metrics.SESSIONS_OPEN.set(1)
         return {"session": row}
+
+    def _accuracy_on_session_end(session_id: str | None) -> None:
+        if accuracy is None:
+            return
+        try:
+            accuracy.on_session_end(session_id)
+        except Exception:  # noqa: BLE001
+            pass
 
     # Static path before {session_id} so "current" is not treated as an id.
     @app.post("/api/sessions/current/end")
@@ -502,6 +518,7 @@ def create_app(
             row = store.end_current(stats=capture.stats)
         except SessionNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        _accuracy_on_session_end(row.get("session_id"))
         metrics.SESSIONS_ENDED.inc()
         metrics.SESSIONS_OPEN.set(0)
         return {"session": row}
@@ -514,8 +531,21 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SessionConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        _accuracy_on_session_end(session_id)
         metrics.SESSIONS_ENDED.inc()
         metrics.SESSIONS_OPEN.set(0)
         return {"session": row}
+
+    # Accuracy HTTP API only when the feature object was wired (enabled at boot).
+    if accuracy is not None:
+        from ac_telemetry.accuracy.api import mount_accuracy_routes
+
+        mount_accuracy_routes(
+            app,
+            settings=settings,
+            store=store,
+            lap_store=lap_store,
+            accuracy=accuracy,
+        )
 
     return app
