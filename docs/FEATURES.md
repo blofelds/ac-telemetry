@@ -58,6 +58,13 @@ Honest inventory of what ships now versus what is planned.
 - Offline helper: `scripts/record-card-native.sh` (ffmpeg) — **only when runtime capture is stopped** (HITL gate).
 - Prefer clips under `~/ac-telemetry-testdata/card/` for ROI-accurate sandbox replays.
 
+### Stint LAST accuracy (optional — default **off**)
+
+- Isolated package `ac_telemetry/accuracy/` + YAML `accuracy.enabled` (env `AC_TELEMETRY_ACCURACY_ENABLED`).
+- When enabled with a session: tiny `lap_time` ROI tee + OCR sample JSONL under `data/sessions/accuracy/<session_id>/`.
+- After stint: confirm GT lap list → **write%** / **ocr-sample%** + every-lap `review.md` (target >99%).
+- Core detect/CSV unchanged when disabled. See [`STINT_ACCURACY.md`](STINT_ACCURACY.md) for enable / disable / rip-out.
+
 ## Not yet
 
 | Area | Status |

@@ -52,6 +52,14 @@ def build(
     lap_store.ensure()
     capture = CaptureService(settings=settings)
 
+    # Accuracy is opt-in (default off). Package imported only when enabled so
+    # a disabled runtime never pays for ROI tee / OCR log modules.
+    accuracy = None
+    if settings.accuracy.enabled:
+        from ac_telemetry.accuracy import maybe_accuracy_session
+
+        accuracy = maybe_accuracy_session(settings.accuracy, settings.data_dir)
+
     detect = DetectService(
         settings=settings,
         get_frame=capture.get_latest_frame,
@@ -61,6 +69,7 @@ def build(
         record_lap=lap_store.append_lap,
         on_metrics=metrics.observe_detect,
         get_capture_info=lambda: capture.stats.as_dict(),
+        on_sample=None if accuracy is None else accuracy.on_sample,
     )
 
     app = create_app(
@@ -69,14 +78,24 @@ def build(
         store,
         lap_store=lap_store,
         detect=detect,
+        accuracy=accuracy,
         on_startup=on_startup,
         on_shutdown=on_shutdown,
     )
     return settings, capture, detect, app
 
 
-def _stop_workers(detect: DetectService, capture: CaptureService) -> None:
+def _stop_workers(
+    detect: DetectService,
+    capture: CaptureService,
+    accuracy: Any | None = None,
+) -> None:
     """Bounded joins so SIGINT never blocks for minutes on VideoCapture/ffmpeg."""
+    if accuracy is not None:
+        try:
+            accuracy.stop()
+        except Exception:  # noqa: BLE001
+            logger.debug("accuracy.stop during shutdown failed", exc_info=True)
     try:
         detect.stop(timeout=2.0)
     except Exception:  # noqa: BLE001
@@ -241,7 +260,7 @@ def main(argv: list[str] | None = None) -> None:
         settings.port = args.port
 
     # Late-bound so lifespan closures see the real instances.
-    holders: dict[str, Any] = {"capture": None, "detect": None}
+    holders: dict[str, Any] = {"capture": None, "detect": None, "accuracy": None}
 
     # uvicorn runs lifespan startup *before* binding the listen socket. Start
     # capture only after bind so VideoCapture.open cannot delay the listen
@@ -276,7 +295,7 @@ def main(argv: list[str] | None = None) -> None:
         detect = holders["detect"]
         if capture is None or detect is None:
             return
-        _stop_workers(detect, capture)
+        _stop_workers(detect, capture, holders.get("accuracy"))
 
     settings, capture, detect, app = build(
         settings,
@@ -285,6 +304,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     holders["capture"] = capture
     holders["detect"] = detect
+    holders["accuracy"] = getattr(app.state, "accuracy", None)
 
     config = uvicorn.Config(
         app,
@@ -328,7 +348,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if _shutdown.is_set():
         logger.info("Shutdown requested during startup; not binding HTTP")
-        _stop_workers(detect, capture)
+        _stop_workers(detect, capture, holders.get("accuracy"))
         return
 
     logger.info(
@@ -343,7 +363,7 @@ def main(argv: list[str] | None = None) -> None:
         server.run()
     finally:
         _shutdown.set()
-        _stop_workers(detect, capture)
+        _stop_workers(detect, capture, holders.get("accuracy"))
 
 
 if __name__ == "__main__":
