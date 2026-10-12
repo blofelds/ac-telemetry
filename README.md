@@ -188,4 +188,4 @@ See [`docs/README.md`](docs/README.md).
 
 ## License
 
-Not decided yet — treat as private until Gary sets one.
+Not decided yet — treat as private until a license is chosen.
