@@ -143,8 +143,8 @@ STATUS_HTML = """<!DOCTYPE html>
 
   <h2>Lap time</h2>
   <div class="grid">
-    <div class="stat"><div class="label">Displayed</div><div class="value" id="lap-display" style="color:var(--lap)">…</div></div>
     <div class="stat"><div class="label">Last recorded</div><div class="value" id="lap-recorded">…</div></div>
+    <div class="stat"><div class="label">Displayed</div><div class="value" id="lap-display" style="color:var(--lap)">…</div></div>
     <div class="stat"><div class="label">Lap #</div><div class="value" id="lap-number">…</div></div>
     <div class="stat"><div class="label">Reader</div><div class="value" id="lap-reader">…</div></div>
   </div>
