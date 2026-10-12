@@ -14,7 +14,7 @@ Orientation for someone opening this repo for the first time.
 
 ## Who it is for
 
-Gary Blofeld — home sim setup: PS5 → splitter → USB capture → Pi, phone on LAN for sessions and live lap times.
+Home sim setup: PS5 → splitter → USB capture → Pi, phone on LAN for sessions and live lap times.
 
 ## Stack in one line
 

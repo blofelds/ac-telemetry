@@ -1,8 +1,8 @@
 """Save lap-time ROI crops as digit/separator PNG templates.
 
 Bundled ``templates/lap_time_digits/ac_*`` may be ACC (wrong game). This
-helper writes real AC crops from the live capture handoff so Gary can build
-a matching template set on the Pi without an offline editor.
+helper writes real AC crops from the live capture handoff so the operator can
+build a matching template set on the Pi without an offline editor.
 """
 
 from __future__ import annotations
