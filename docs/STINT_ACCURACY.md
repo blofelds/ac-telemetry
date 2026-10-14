@@ -72,6 +72,30 @@ curl -sS -X POST "$PI/api/accuracy/sessions/$SESSION_ID/gt" \
   -d @"/tmp/gt_draft.json"
 ```
 
+#### GT eyeballing helper (phone / browser)
+
+When accuracy is enabled, open:
+
+```text
+http://<pi>:8741/accuracy
+http://<pi>:8741/accuracy/<session_id>
+```
+
+(`?session=<id>` also works on `/accuracy`.) Routes **404** when
+`accuracy.enabled` is false.
+
+Layout: **two tee crops on the left** per lap (first + last of that hold’s
+JPEG tee; or both when only two exist), **editable lap times on the right**.
+**Confirm** calls `POST /api/accuracy/sessions/{id}/gt/confirm`, which:
+
+1. Writes `gt_draft.json` and `gt.json` under the accuracy session dir
+2. Sets `note=gt_confirmed` on **every** row for that session in `laps.csv`
+3. Updates `lap_time` / `lap_time_ms` on CSV rows when the edited GT differs
+4. Optionally scores (write% / ocr-sample%) like the existing GT submit
+
+Page data: `GET /api/accuracy/sessions/{id}/helper` (laps + crop URLs).
+Crops: `GET /api/accuracy/sessions/{id}/roi/{filename}.jpg`.
+
 Offline CLI (works even if runtime has accuracy off — scores stored artefacts):
 
 ```bash
@@ -90,6 +114,7 @@ Under `{data_dir}/accuracy/{session_id}/` (default `data/sessions/accuracy/<id>/
 | `roi/*.jpg` | Timestamped ROI crops (`seq_monoMs.jpg`), ≤3 per hold by default |
 | `roi_manifest.jsonl` | seq + mono/wall + OCR text + path (tee’d frames only) |
 | `ocr_samples.jsonl` | Every detect sample (full rate — drives ocr-sample%) |
+| `gt_draft.json` | Helper Confirm draft (same laps as `gt.json`) |
 | `gt.json` | Confirmed GT list |
 | `score.json` / `score.md` | write% + ocr-sample% summary |
 | `review.md` | **Every** GT lap: CSV write, OCR histogram, ROI paths |
@@ -126,13 +151,15 @@ can chase the last fraction of a percent toward >99%.
 One rip-out later:
 
 1. Delete package `ac_telemetry/accuracy/`
-2. Delete YAML block `accuracy:` in `config/default.yaml`
-3. Delete `AccuracySettings` / `Settings.accuracy` / `_parse_accuracy` in `ac_telemetry/settings.py`
-4. Delete thin wiring:
+2. Delete `ac_telemetry/web/accuracy.py` (helper HTML)
+3. Delete YAML block `accuracy:` in `config/default.yaml`
+4. Delete `AccuracySettings` / `Settings.accuracy` / `_parse_accuracy` in `ac_telemetry/settings.py`
+5. Delete thin wiring:
    - `main.py` — lazy `maybe_accuracy_session` block + accuracy arg to `_stop_workers`
    - `api/__init__.py` — `accuracy=` param, session start/end hooks, `mount_accuracy_routes`
    - `detect/service.py` — `on_sample` field + `_emit_sample` (optional to keep as a generic hook)
-5. Delete `docs/STINT_ACCURACY.md` and this guide’s links in FEATURES/USER_GUIDE
-6. Delete `tests/test_accuracy_*.py`
+6. Optionally drop the `note` column from `LapStore` / `laps.csv` if nothing else uses it
+7. Delete `docs/STINT_ACCURACY.md` and this guide’s links in FEATURES/USER_GUIDE
+8. Delete `tests/test_accuracy_*.py`
 
 Core lap detect/CSV must not import `ac_telemetry.accuracy` after that.
