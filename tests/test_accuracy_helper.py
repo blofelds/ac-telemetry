@@ -247,9 +247,6 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
         client.get(f"/api/accuracy/sessions/{sid}/roi/not-a-jpeg.png").status_code
         == 400
     )
-    from ac_telemetry.accuracy.helper import resolve_roi_file
-    import pytest
-
     with pytest.raises(ValueError):
         resolve_roi_file(
             data_dir=data_dir,
