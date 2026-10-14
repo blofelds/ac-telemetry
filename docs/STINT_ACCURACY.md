@@ -3,8 +3,10 @@
 Session-scoped tooling to push LAST accuracy **over 99%** by reviewing **every
 lap** (not only mismatches):
 
-1. **ROI tee** — tiny `lap_time` crops at detect FPS (JPEG sequence by default)
-2. **OCR sample log** — every detect read (timestamp + raw text)
+1. **ROI tee** — tiny `lap_time` crops for review (JPEG sequence by default),
+   capped at **3 per hold** (see below)
+2. **OCR sample log** — every detect read (timestamp + raw text) at **full
+   detect rate** (unaffected by the JPEG cap)
 3. **GT scores** — after the stint, confirm a ground-truth lap list → **write%**
    and **ocr-sample%** plus a per-lap review
 
@@ -39,6 +41,7 @@ accuracy:
   roi_tee: true
   ocr_log: true
   roi_tee_format: jpeg_seq    # preferred on Pi 2B
+  roi_tee_max_per_hold: 3     # JPEG cap per stable LAST hold; 0 = unlimited
 ```
 
 ```bash
@@ -84,12 +87,29 @@ Under `{data_dir}/accuracy/{session_id}/` (default `data/sessions/accuracy/<id>/
 
 | File | Role |
 | --- | --- |
-| `roi/*.jpg` | Timestamped ROI crops (`seq_monoMs.jpg`) |
-| `roi_manifest.jsonl` | seq + mono/wall + OCR text + path |
-| `ocr_samples.jsonl` | Every detect sample |
+| `roi/*.jpg` | Timestamped ROI crops (`seq_monoMs.jpg`), ≤3 per hold by default |
+| `roi_manifest.jsonl` | seq + mono/wall + OCR text + path (tee’d frames only) |
+| `ocr_samples.jsonl` | Every detect sample (full rate — drives ocr-sample%) |
 | `gt.json` | Confirmed GT list |
 | `score.json` / `score.md` | write% + ocr-sample% summary |
 | `review.md` | **Every** GT lap: CSV write, OCR histogram, ROI paths |
+
+### ROI tee density (per hold)
+
+A **hold** is a run of consecutive detect samples with the same OCR text (the
+last_lap stable-hold window while HUD LAST is unchanged). Operators can read
+digits in virtually every crop, so hundreds of JPEGs per lap are unnecessary.
+
+| Knob | Default | Meaning |
+| --- | --- | --- |
+| `accuracy.roi_tee_max_per_hold` | `3` | Max JPEG crops written per hold (`0` = unlimited) |
+
+**Which 3 frames:** for each hold the tee keeps the **first**, **middle**
+(`(n - 1) // 2`), and **last** sample. Shorter holds write fewer frames; other
+cap values use endpoints plus even spacing.
+
+**Unchanged by the cap:** `ocr_samples.jsonl` / the OCR log still records
+**every** detect sample, so **write%** and **ocr-sample%** are unaffected.
 
 ### Metrics
 

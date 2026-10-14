@@ -2,6 +2,11 @@
 
 Writes tiny ROI crops only — never full frames. OpenCV encode path; no
 H.264. Detect thread offers frames via a bounded queue (drop under pressure).
+
+JPEG density is capped per **hold** (consecutive samples with the same OCR
+text — the last_lap stable-hold window). Selection is first / middle / last
+(or evenly spaced when ``max_per_hold`` is not 3). OCR sample logging is
+separate and stays at full detect rate.
 """
 
 from __future__ import annotations
@@ -19,6 +24,99 @@ logger = logging.getLogger(__name__)
 RoiTeeFormat = Literal["jpeg_seq", "mjpeg", "avi"]
 
 
+def select_hold_tee_indices(n: int, max_per_hold: int) -> list[int]:
+    """Indices to keep from a hold of ``n`` samples (sorted, unique).
+
+    * ``max_per_hold <= 0`` — keep every sample (unlimited).
+    * ``max_per_hold == 1`` — first only.
+    * ``max_per_hold == 2`` — first and last.
+    * ``max_per_hold == 3`` — first, middle ``(n - 1) // 2``, last.
+    * ``max_per_hold > 3`` — evenly spaced including endpoints.
+    """
+    if n <= 0:
+        return []
+    if max_per_hold <= 0 or n <= max_per_hold:
+        return list(range(n))
+    if max_per_hold == 1:
+        return [0]
+    if max_per_hold == 2:
+        return [0, n - 1]
+    if max_per_hold == 3:
+        mid = (n - 1) // 2
+        out: list[int] = []
+        for idx in (0, mid, n - 1):
+            if idx not in out:
+                out.append(idx)
+        return out
+    # Evenly spaced including endpoints.
+    out = []
+    last = max_per_hold - 1
+    for j in range(max_per_hold):
+        idx = int(round(j * (n - 1) / last))
+        if idx not in out:
+            out.append(idx)
+    return out
+
+
+def hold_key_for_sample(*, text: str, lap_time_ms: int | None, ok: bool) -> str:
+    """Bucket key for a stable LAST hold.
+
+    Same non-empty OCR text shares a hold. Empty / failed reads use a
+    distinct key so they do not merge with a prior good hold.
+    """
+    cleaned = (text or "").strip()
+    if cleaned:
+        return f"t:{cleaned}"
+    if ok and lap_time_ms is not None:
+        return f"ms:{int(lap_time_ms)}"
+    return "empty"
+
+
+@dataclass
+class HoldTeeSampler:
+    """Buffer one hold, emit at most ``max_per_hold`` frames when it ends."""
+
+    max_per_hold: int = 3
+    _key: str | None = field(default=None, init=False, repr=False)
+    _items: list[Any] = field(default_factory=list, init=False, repr=False)
+    samples_seen: int = field(default=0, init=False)
+    samples_selected: int = field(default=0, init=False)
+
+    def push(self, key: str, item: Any) -> list[Any]:
+        """Add ``item`` to the current hold; return frames ready to encode.
+
+        When ``max_per_hold <= 0`` (unlimited), each item is emitted immediately.
+        Otherwise items stay buffered until the hold key changes or :meth:`flush`.
+        """
+        self.samples_seen += 1
+        if self.max_per_hold <= 0:
+            self._key = key
+            self.samples_selected += 1
+            return [item]
+        ready: list[Any] = []
+        if self._key is not None and key != self._key:
+            ready = self._flush_current()
+        self._key = key
+        self._items.append(item)
+        return ready
+
+    def flush(self) -> list[Any]:
+        """Close the open hold (session stop)."""
+        ready = self._flush_current()
+        self._key = None
+        return ready
+
+    def _flush_current(self) -> list[Any]:
+        items = self._items
+        self._items = []
+        if not items:
+            return []
+        idxs = select_hold_tee_indices(len(items), self.max_per_hold)
+        selected = [items[i] for i in idxs]
+        self.samples_selected += len(selected)
+        return selected
+
+
 @dataclass
 class RoiTeeStatus:
     active: bool = False
@@ -26,6 +124,9 @@ class RoiTeeStatus:
     path: str | None = None
     frames_written: int = 0
     frames_dropped: int = 0
+    frames_seen: int = 0
+    frames_hold_skipped: int = 0
+    max_per_hold: int = 3
     format: str = "jpeg_seq"
     error: str | None = None
 
@@ -36,6 +137,9 @@ class RoiTeeStatus:
             "path": self.path,
             "frames_written": self.frames_written,
             "frames_dropped": self.frames_dropped,
+            "frames_seen": self.frames_seen,
+            "frames_hold_skipped": self.frames_hold_skipped,
+            "max_per_hold": self.max_per_hold,
             "format": self.format,
             "error": self.error,
         }
@@ -60,6 +164,7 @@ class RoiTeeWriter:
     fmt: RoiTeeFormat = "jpeg_seq"
     jpeg_quality: int = 70
     queue_size: int = 2
+    max_per_hold: int = 3
     _queue: queue.Queue[_RoiItem | None] = field(init=False, repr=False)
     _thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
@@ -67,13 +172,27 @@ class RoiTeeWriter:
     _seq: int = field(default=0, init=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False)
     _cv2: Any = field(default=None, init=False, repr=False)
+    _sampler: HoldTeeSampler = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._queue = queue.Queue(maxsize=max(1, int(self.queue_size)))
+        # Room for back-to-back hold flushes plus a stop sentinel.
+        cap = max(1, int(self.queue_size))
+        if int(self.max_per_hold) > 0:
+            cap = max(cap, int(self.max_per_hold) * 2 + 1)
+        self._queue = queue.Queue(maxsize=cap)
+        self._sampler = HoldTeeSampler(max_per_hold=int(self.max_per_hold))
+        self._status.max_per_hold = int(self.max_per_hold)
 
     def status(self) -> dict[str, Any]:
         with self._lock:
-            return self._status.as_dict()
+            st = self._status.as_dict()
+            st["frames_seen"] = self._sampler.samples_seen
+            selected = self._sampler.samples_selected
+            # Include still-buffered items as not-yet-skipped.
+            pending = len(self._sampler._items)
+            skipped = max(0, self._sampler.samples_seen - selected - pending)
+            st["frames_hold_skipped"] = skipped
+            return st
 
     def start(self, session_id: str) -> dict[str, Any]:
         try:
@@ -96,11 +215,13 @@ class RoiTeeWriter:
             self._cv2 = cv2
             self._stop.clear()
             self._seq = 0
+            self._sampler = HoldTeeSampler(max_per_hold=int(self.max_per_hold))
             self._status = RoiTeeStatus(
                 active=True,
                 session_id=session_id,
                 path=str(roi_dir if self.fmt == "jpeg_seq" else self.session_dir),
                 format=self.fmt,
+                max_per_hold=int(self.max_per_hold),
             )
             self._thread = threading.Thread(
                 target=self._writer_loop,
@@ -116,25 +237,32 @@ class RoiTeeWriter:
             thread = self._thread
             alive = thread is not None and thread.is_alive()
             if not self._status.active and not alive:
-                return self._status.as_dict()
+                inactive = True
+                pending: list[Any] = []
+            else:
+                inactive = False
+                # Flush the open hold before signalling stop so selected frames
+                # are queued while the writer is still draining normally.
+                pending = self._sampler.flush()
+        if inactive:
+            return self.status()
+        for item in pending:
+            self._enqueue(item, block=True)
+        with self._lock:
             self._stop.set()
+        # Blocking sentinel — never drop a selected frame to make room.
         try:
-            self._queue.put_nowait(None)
+            self._queue.put(None, timeout=max(1.0, float(join_timeout)))
         except queue.Full:
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                self._queue.put_nowait(None)
-            except queue.Full:
-                pass
+            with self._lock:
+                self._status.frames_dropped += 1
+            logger.warning("Accuracy ROI tee stop sentinel dropped (queue full)")
         if thread is not None:
             thread.join(timeout=max(0.1, float(join_timeout)))
         with self._lock:
             self._status.active = False
             self._thread = None
-            return self._status.as_dict()
+        return self.status()
 
     def offer(
         self,
@@ -154,9 +282,6 @@ class RoiTeeWriter:
                 return
             self._seq += 1
             seq = self._seq
-            if self._queue.full():
-                self._status.frames_dropped += 1
-                return
         try:
             payload = roi_bgr.copy()
         except AttributeError:
@@ -170,8 +295,22 @@ class RoiTeeWriter:
             lap_time_ms=lap_time_ms,
             ok=ok,
         )
+        key = hold_key_for_sample(text=text, lap_time_ms=lap_time_ms, ok=ok)
+        with self._lock:
+            ready = self._sampler.push(key, item)
+            capped = self.max_per_hold > 0
+        # Hold-boundary flushes enqueue up to max_per_hold frames; block briefly
+        # so queue_size=2 does not drop the third pick. Unlimited mode stays
+        # non-blocking (same drop-under-pressure behaviour as before).
+        for ready_item in ready:
+            self._enqueue(ready_item, block=capped)
+
+    def _enqueue(self, item: _RoiItem, *, block: bool = False) -> None:
         try:
-            self._queue.put_nowait(item)
+            if block:
+                self._queue.put(item, timeout=1.0)
+            else:
+                self._queue.put_nowait(item)
         except queue.Full:
             with self._lock:
                 self._status.frames_dropped += 1
@@ -188,11 +327,17 @@ class RoiTeeWriter:
             if self.fmt in ("mjpeg", "avi"):
                 # Container chosen at first frame once size is known.
                 pass
-            while not self._stop.is_set():
+            while True:
                 try:
                     item = self._queue.get(timeout=0.2)
                 except queue.Empty:
-                    continue
+                    if not self._stop.is_set():
+                        continue
+                    # Stop requested: drain anything already queued, then exit.
+                    try:
+                        item = self._queue.get_nowait()
+                    except queue.Empty:
+                        break
                 if item is None:
                     break
                 h, w = int(item.roi_bgr.shape[0]), int(item.roi_bgr.shape[1])
@@ -259,8 +404,11 @@ class RoiTeeWriter:
                 self._status.active = False
                 self._status.frames_written = written
             logger.info(
-                "Accuracy ROI tee stopped session=%s frames=%s dropped=%s",
+                "Accuracy ROI tee stopped session=%s frames=%s dropped=%s "
+                "seen=%s hold_cap=%s",
                 session_id,
                 written,
                 self._status.frames_dropped,
+                self._sampler.samples_seen,
+                self.max_per_hold,
             )

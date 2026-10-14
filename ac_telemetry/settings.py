@@ -133,6 +133,9 @@ class AccuracySettings(BaseModel):
     jpeg_quality: int = Field(default=70, ge=40, le=95)
     ocr_log: bool = True
     roi_tee: bool = True
+    # Cap JPEG crops per stable LAST hold (same OCR text). 0 = unlimited.
+    # ocr_samples.jsonl stays at full detect rate regardless.
+    roi_tee_max_per_hold: int = Field(default=3, ge=0, le=64)
     queue_size: int = Field(default=2, ge=1, le=8)
     subdir: str = "accuracy"
 
@@ -272,6 +275,7 @@ def _parse_accuracy(raw: dict[str, Any] | None) -> AccuracySettings:
         "jpeg_quality",
         "ocr_log",
         "roi_tee",
+        "roi_tee_max_per_hold",
         "queue_size",
         "subdir",
     ):
