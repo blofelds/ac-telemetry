@@ -43,6 +43,7 @@ class AccuracySession:
                 "roi_tee": self.settings.roi_tee,
                 "ocr_log": self.settings.ocr_log,
                 "roi_tee_format": self.settings.roi_tee_format,
+                "roi_tee_max_per_hold": self.settings.roi_tee_max_per_hold,
                 "session_id": self._session_id,
                 "ocr_samples": None if self._ocr is None else self._ocr.count,
                 "tee": tee_status,
@@ -86,6 +87,7 @@ class AccuracySession:
                     fmt=self.settings.roi_tee_format,
                     jpeg_quality=self.settings.jpeg_quality,
                     queue_size=self.settings.queue_size,
+                    max_per_hold=self.settings.roi_tee_max_per_hold,
                 )
                 try:
                     tee_status = self._tee.start(sid)
