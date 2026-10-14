@@ -91,6 +91,9 @@ accuracy:
   roi_tee: true
   ocr_log: true
   roi_tee_format: jpeg_seq   # jpeg_seq | mjpeg | avi (OpenCV MJPG; no H.264)
+  # Max JPEG crops per stable LAST hold (same OCR text). 0 = unlimited.
+  # ocr_samples.jsonl stays at full detect rate either way.
+  roi_tee_max_per_hold: 3
   jpeg_quality: 70
   queue_size: 2
   subdir: accuracy           # artefacts under {data_dir}/accuracy/{session_id}/
