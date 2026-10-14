@@ -86,7 +86,7 @@ rois:
 # Rip-out later: delete this block + ac_telemetry/accuracy/ + thin wiring
 # (Settings.accuracy, main lazy import, api mount, detect on_sample hook).
 accuracy:
-  enabled: false
+  enabled: true
   with_session: true
   roi_tee: true
   ocr_log: true
