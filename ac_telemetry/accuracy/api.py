@@ -5,8 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from ac_telemetry.accuracy.helper import (
+    GT_CONFIRMED_NOTE,
+    build_helper_page_data,
+    confirm_helper_gt,
+    resolve_roi_file,
+)
 from ac_telemetry.accuracy.score import (
     load_gt_list,
     prefills_from_csv,
@@ -16,6 +23,7 @@ from ac_telemetry.accuracy.score import (
 from ac_telemetry.accuracy.session import AccuracySession
 from ac_telemetry.settings import Settings
 from ac_telemetry.store import LapStore, SessionStore
+from ac_telemetry.web.accuracy import ACCURACY_HELPER_HTML
 
 
 class GtSubmitBody(BaseModel):
@@ -31,6 +39,24 @@ class GtSubmitBody(BaseModel):
     )
 
 
+class GtConfirmBody(BaseModel):
+    """Helper Confirm — GT draft + gt.json + stint CSV note/times."""
+
+    laps: list[Any] = Field(
+        ...,
+        description="Edited lap times (same shapes as GT submit).",
+    )
+    score: bool = Field(
+        default=True,
+        description="If true, compute write%/ocr-sample% after confirm.",
+    )
+    note: str = Field(
+        default=GT_CONFIRMED_NOTE,
+        max_length=200,
+        description="Note written onto every laps.csv row for this session.",
+    )
+
+
 def mount_accuracy_routes(
     app: FastAPI,
     *,
@@ -39,13 +65,22 @@ def mount_accuracy_routes(
     lap_store: LapStore | None,
     accuracy: AccuracySession,
 ) -> None:
-    """Register /api/accuracy/* routes. Caller must only mount when enabled."""
+    """Register /api/accuracy/* and /accuracy helper. Caller mounts when enabled."""
 
     def _sid_or_404(session_id: str) -> str:
         row = store.get_session(session_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Session not found")
         return session_id
+
+    @app.get("/accuracy", response_class=HTMLResponse)
+    def accuracy_helper_page() -> HTMLResponse:
+        return HTMLResponse(ACCURACY_HELPER_HTML)
+
+    @app.get("/accuracy/{session_id}", response_class=HTMLResponse)
+    def accuracy_helper_page_session(session_id: str) -> HTMLResponse:
+        # Page loads even if session_id is unknown; API calls 404 later.
+        return HTMLResponse(ACCURACY_HELPER_HTML)
 
     @app.get("/api/accuracy/status")
     def api_accuracy_status() -> dict[str, Any]:
@@ -74,6 +109,55 @@ def mount_accuracy_routes(
             "laps": prefills_from_csv(laps),
             "note": "Confirm/edit then POST /api/accuracy/sessions/{id}/gt",
         }
+
+    @app.get("/api/accuracy/sessions/{session_id}/helper")
+    def api_accuracy_helper(session_id: str) -> dict[str, Any]:
+        """Page data: prefill laps + up to two tee crop URLs per hold."""
+        _sid_or_404(session_id)
+        return build_helper_page_data(
+            data_dir=settings.data_dir,
+            session_id=session_id,
+            lap_store=lap_store,
+            subdir=accuracy.settings.subdir,
+        )
+
+    @app.get("/api/accuracy/sessions/{session_id}/roi/{filename}")
+    def api_accuracy_roi_file(session_id: str, filename: str) -> FileResponse:
+        _sid_or_404(session_id)
+        try:
+            path = resolve_roi_file(
+                data_dir=settings.data_dir,
+                session_id=session_id,
+                filename=filename,
+                subdir=accuracy.settings.subdir,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="ROI crop not found")
+        return FileResponse(path, media_type="image/jpeg")
+
+    @app.post("/api/accuracy/sessions/{session_id}/gt/confirm")
+    def api_accuracy_gt_confirm(
+        session_id: str, body: GtConfirmBody
+    ) -> dict[str, Any]:
+        """Confirm helper edits: gt_draft.json + gt.json + laps.csv note/times."""
+        _sid_or_404(session_id)
+        try:
+            return confirm_helper_gt(
+                data_dir=settings.data_dir,
+                session_id=session_id,
+                raw_laps=body.laps,
+                lap_store=lap_store,
+                subdir=accuracy.settings.subdir,
+                score=body.score,
+                note=body.note or GT_CONFIRMED_NOTE,
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            if "Lap store not configured" in detail:
+                raise HTTPException(status_code=503, detail=detail) from exc
+            raise HTTPException(status_code=400, detail=detail) from exc
 
     @app.post("/api/accuracy/sessions/{session_id}/gt")
     def api_accuracy_gt_submit(

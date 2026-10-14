@@ -27,6 +27,11 @@ def gt_path(session_dir_path: Path) -> Path:
     return session_dir_path / "gt.json"
 
 
+def gt_draft_path(session_dir_path: Path) -> Path:
+    """Operator-confirmed draft written by the GT eyeballing helper."""
+    return session_dir_path / "gt_draft.json"
+
+
 def score_json_path(session_dir_path: Path) -> Path:
     return session_dir_path / "score.json"
 
