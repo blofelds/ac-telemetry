@@ -25,6 +25,8 @@ Documentation follows the same **layout philosophy** as [blofelds/acc-telemetry]
 ## Specialized topics
 
 - **[ROI.md](ROI.md)** — Last-lap ROI, `/debug` calibration, acc-telemetry HUD keys
+- **[ACCURACY_HISTORY.md](ACCURACY_HISTORY.md)** — Full-video replay history schema + two-layer measurement
+- **[STINT_ACCURACY.md](STINT_ACCURACY.md)** — Optional session ROI tee + GT write%/ocr-sample%
 
 Candidates as work lands:
 
