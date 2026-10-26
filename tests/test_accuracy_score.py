@@ -34,10 +34,121 @@ def test_align_exact_with_extras_and_miss() -> None:
     ]
     # Fix extra to a valid but unmatched time
     csv[1]["lap_time"] = "1:55.000"
-    matches, misses, extras = align_csv_to_gt(gt, csv)
+    matches, misses, extras, doubles = align_csv_to_gt(gt, csv)
     assert [m["gt"]["lap_time"] for m in matches] == ["1:00.000", "1:02.000"]
     assert [m["lap_time"] for m in misses] == ["1:01.000"]
     assert [e["lap_time"] for e in extras] == ["1:55.000"]
+    assert doubles == []
+
+
+def test_align_double_excluded_from_write_and_extras() -> None:
+    """Double = false extra CSV: not a match target, not an unexplained extra."""
+    gt = load_gt_list(
+        [
+            {"lap_time": "1:00.000", "mark": "normal", "csv_lap_number": 1},
+            {"lap_time": "1:00.010", "mark": "double", "csv_lap_number": 2},
+            {"lap_time": "1:01.000", "mark": "normal", "csv_lap_number": 3},
+        ]
+    )
+    csv = [
+        {"lap_time": "1:01.000", "lap_number": "3", "recorded_at": "2026-10-11T12:03:00+00:00"},
+        {"lap_time": "1:00.010", "lap_number": "2", "recorded_at": "2026-10-11T12:02:00+00:00"},
+        {"lap_time": "1:00.000", "lap_number": "1", "recorded_at": "2026-10-11T12:01:00+00:00"},
+    ]
+    matches, misses, extras, doubles = align_csv_to_gt(gt, csv)
+    assert [m["gt"]["lap_time"] for m in matches] == ["1:00.000", "1:01.000"]
+    assert misses == []
+    assert extras == []
+    assert [d["lap_time"] for d in doubles] == ["1:00.010"]
+
+
+def test_align_skip_counts_as_miss() -> None:
+    """Skip = on-screen lap with no CSV write → miss, allows GT without CSV."""
+    gt = load_gt_list(
+        [
+            {"lap_time": "1:00.000", "mark": "normal", "csv_lap_number": 1},
+            {"lap_time": "1:00.500", "mark": "skip"},
+            {"lap_time": "1:01.000", "mark": "normal", "csv_lap_number": 2},
+        ]
+    )
+    csv = [
+        {"lap_time": "1:01.000", "lap_number": "2", "recorded_at": "2026-10-11T12:02:00+00:00"},
+        {"lap_time": "1:00.000", "lap_number": "1", "recorded_at": "2026-10-11T12:01:00+00:00"},
+    ]
+    matches, misses, extras, doubles = align_csv_to_gt(gt, csv)
+    assert [m["gt"]["lap_time"] for m in matches] == ["1:00.000", "1:01.000"]
+    assert [m["lap_time"] for m in misses] == ["1:00.500"]
+    assert all(m.get("mark") == "skip" for m in misses)
+    assert extras == []
+    assert doubles == []
+
+
+def test_score_session_respects_double_and_skip(tmp_path: Path) -> None:
+    data_dir = tmp_path / "sessions"
+    store = LapStore(data_dir)
+    store.ensure()
+    sid = "markscore1"
+    store.append_lap(
+        {
+            "session_id": sid,
+            "lap_number": 1,
+            "lap_time": "1:00.000",
+            "lap_time_ms": 60_000,
+            "recorded_at": "2026-10-11T12:01:00+00:00",
+            "source": "mock",
+            "raw_text": "1:00.000",
+        }
+    )
+    store.append_lap(
+        {
+            "session_id": sid,
+            "lap_number": 2,
+            "lap_time": "1:00.010",
+            "lap_time_ms": 60_010,
+            "recorded_at": "2026-10-11T12:01:30+00:00",
+            "source": "mock",
+            "raw_text": "1:00.010",
+        }
+    )
+    store.append_lap(
+        {
+            "session_id": sid,
+            "lap_number": 3,
+            "lap_time": "1:01.000",
+            "lap_time_ms": 61_000,
+            "recorded_at": "2026-10-11T12:02:00+00:00",
+            "source": "mock",
+            "raw_text": "1:01.000",
+        }
+    )
+    gt = load_gt_list(
+        [
+            {"lap_time": "1:00.000", "mark": "normal", "csv_lap_number": 1},
+            {"lap_time": "1:00.010", "mark": "double", "csv_lap_number": 2},
+            {"lap_time": "1:00.500", "mark": "skip"},
+            {"lap_time": "1:01.000", "mark": "normal", "csv_lap_number": 3},
+        ]
+    )
+    report = score_session(
+        data_dir=data_dir,
+        session_id=sid,
+        gt_laps=gt,
+        lap_store=store,
+    )
+    # write% = 2 matches / 3 scoring GT (normal+skip); double excluded
+    assert report["write_matches"] == 2
+    assert report["gt_laps"] == 3
+    assert report["write_doubles"] == 1
+    assert report["gt_skips"] == 1
+    assert report["write_misses"] == 1
+    assert report["write_extras"] == 0
+    assert report["write_pct"] == round(100.0 * 2 / 3, 2)
+    md = (Path(report["artefact_dir"]) / "score.md").read_text(encoding="utf-8")
+    assert "double" in md
+    assert "skip" in md
+    assert "denom excludes doubles" in md
+    marks = [lap["mark"] for lap in report["per_lap"]]
+    assert marks == ["normal", "double", "skip", "normal"]
 
 
 def test_score_session_write_and_ocr_pct(tmp_path: Path) -> None:

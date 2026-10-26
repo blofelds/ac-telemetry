@@ -9,12 +9,17 @@ from typing import Any
 
 from ac_telemetry.accuracy.paths import (
     gt_draft_path,
+    gt_path,
     roi_manifest_path,
     session_dir,
 )
 from ac_telemetry.accuracy.score import (
+    MARK_DOUBLE,
+    MARK_NORMAL,
+    MARK_SKIP,
     load_gt_list,
     normalize_lap_text,
+    normalize_mark,
     prefills_from_csv,
     save_gt,
     score_session,
@@ -23,8 +28,9 @@ from ac_telemetry.store.laps import LapStore
 
 logger = logging.getLogger(__name__)
 
-# Written onto every CSV lap row for the session when Confirm succeeds.
+# Written onto CSV lap rows when Confirm succeeds (doubles use GT_DOUBLE_NOTE).
 GT_CONFIRMED_NOTE = "gt_confirmed"
+GT_DOUBLE_NOTE = "gt_double"
 
 
 def select_display_crops(
@@ -115,6 +121,82 @@ def _match_holds_to_laps(
     return out
 
 
+def _load_saved_gt_laps(sdir: Path) -> list[dict[str, Any]]:
+    """Prefer gt_draft.json, else gt.json — empty if neither exists."""
+    for path in (gt_draft_path(sdir), gt_path(sdir)):
+        if not path.is_file():
+            continue
+        try:
+            return load_gt_list(json.loads(path.read_text(encoding="utf-8")))
+        except (ValueError, json.JSONDecodeError):
+            logger.warning("Ignoring invalid GT file at %s", path)
+    return []
+
+
+def _merge_saved_marks(
+    draft_laps: list[dict[str, Any]],
+    saved: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Rebuild page laps in saved GT order, attaching CSV prefill metadata.
+
+    Preserves skip positions between CSV-backed rows. Any new CSV rows not
+    referenced in the saved GT are appended at the end as normal.
+    """
+    if not saved:
+        return draft_laps
+
+    by_csv: dict[str, dict[str, Any]] = {}
+    for lap in draft_laps:
+        key = lap.get("csv_lap_number")
+        key_s = str(key).strip() if key is not None else ""
+        if key_s and key_s not in by_csv:
+            by_csv[key_s] = lap
+
+    used_csv: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for row in saved:
+        mark = normalize_mark(row.get("mark"))
+        key = row.get("csv_lap_number")
+        key_s = str(key).strip() if key is not None else ""
+        if key_s and key_s in by_csv:
+            out = dict(by_csv[key_s])
+            out["mark"] = mark
+            out["lap_time"] = row.get("lap_time") or out.get("lap_time")
+            out["lap_time_ms"] = row.get("lap_time_ms") or out.get("lap_time_ms")
+            if row.get("note"):
+                out["note"] = row["note"]
+            used_csv.add(key_s)
+            merged.append(out)
+            continue
+        # Skip (or other GT-only) row — keep in saved order.
+        merged.append(
+            {
+                "gt_index": 0,
+                "lap_time": row["lap_time"],
+                "lap_time_ms": row["lap_time_ms"],
+                "note": row.get("note")
+                or (
+                    "skip — on-screen, no CSV"
+                    if mark == MARK_SKIP
+                    else row.get("note") or ""
+                ),
+                "mark": mark,
+            }
+        )
+
+    for lap in draft_laps:
+        key = lap.get("csv_lap_number")
+        key_s = str(key).strip() if key is not None else ""
+        if key_s and key_s not in used_csv:
+            out = dict(lap)
+            out["mark"] = normalize_mark(out.get("mark"))
+            merged.append(out)
+
+    for i, lap in enumerate(merged, start=1):
+        lap["gt_index"] = i
+    return merged
+
+
 def build_helper_page_data(
     *,
     data_dir: Path,
@@ -136,6 +218,9 @@ def build_helper_page_data(
     else:
         csv_laps = lap_store.list_laps(session_id=session_id, limit=500)
         draft_laps = prefills_from_csv(csv_laps)
+
+    saved = _load_saved_gt_laps(sdir)
+    draft_laps = _merge_saved_marks(draft_laps, saved)
 
     paired = _match_holds_to_laps(draft_laps, holds)
     page_laps: list[dict[str, Any]] = []
@@ -164,6 +249,7 @@ def build_helper_page_data(
                 "csv_lap_number": lap.get("csv_lap_number"),
                 "csv_recorded_at": lap.get("csv_recorded_at"),
                 "note": lap.get("note") or "",
+                "mark": normalize_mark(lap.get("mark")),
                 "crops": crops,
             }
         )
@@ -174,9 +260,10 @@ def build_helper_page_data(
         "roi_frame_count": len(manifest),
         "hold_count": len(holds),
         "artefact_dir": str(sdir),
+        "marks": [MARK_NORMAL, MARK_DOUBLE, MARK_SKIP],
         "note": (
-            "Edit lap times, then Confirm — writes gt_draft.json + gt.json "
-            "and updates laps.csv notes/times."
+            "Edit times and mark double/skip, then Confirm — writes "
+            "gt_draft.json + gt.json and updates laps.csv notes/times."
         ),
     }
 
@@ -202,20 +289,45 @@ def save_gt_draft(
 def _lap_updates_from_gt(
     gt_laps: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Map GT rows → LapStore.update_session_laps updates (by csv_lap_number)."""
+    """Map GT rows with a CSV ref → LapStore updates (skips have no CSV)."""
     updates: list[dict[str, Any]] = []
     for gt in gt_laps:
-        text = gt["lap_time"]
-        ms = gt["lap_time_ms"]
-        entry: dict[str, Any] = {
-            "lap_time": text,
-            "lap_time_ms": ms,
-        }
+        mark = normalize_mark(gt.get("mark"))
+        if mark == MARK_SKIP:
+            continue
         csv_n = gt.get("csv_lap_number")
-        if csv_n is not None and str(csv_n).strip() != "":
-            entry["lap_number"] = csv_n
-        updates.append(entry)
+        if csv_n is None or str(csv_n).strip() == "":
+            continue
+        updates.append(
+            {
+                "lap_time": gt["lap_time"],
+                "lap_time_ms": gt["lap_time_ms"],
+                "lap_number": csv_n,
+            }
+        )
     return updates
+
+
+def _gt_row_for_files(g: dict[str, Any], *, default_note: str) -> dict[str, Any]:
+    """Shape a GT row for gt_draft.json / gt.json (keeps mark + csv ref)."""
+    mark = normalize_mark(g.get("mark"))
+    if mark == MARK_DOUBLE:
+        note = g.get("note") or GT_DOUBLE_NOTE
+    elif mark == MARK_SKIP:
+        note = g.get("note") or "skip — on-screen, no CSV"
+    else:
+        note = g.get("note") or default_note
+    row: dict[str, Any] = {
+        "gt_index": g["gt_index"],
+        "lap_time": g["lap_time"],
+        "lap_time_ms": g["lap_time_ms"],
+        "mark": mark,
+        "note": note,
+    }
+    csv_n = g.get("csv_lap_number")
+    if csv_n is not None and str(csv_n).strip() != "":
+        row["csv_lap_number"] = csv_n
+    return row
 
 
 def enrich_gt_with_csv_refs(
@@ -225,8 +337,9 @@ def enrich_gt_with_csv_refs(
     session_id: str,
 ) -> list[dict[str, Any]]:
     """Normalize GT and carry csv_lap_number from confirm body or CSV order."""
-    # Preserve csv_lap_number from dict items before load_gt_list strips unknowns.
+    # Preserve csv_lap_number / mark from dict items before load_gt_list.
     csv_refs: list[Any] = []
+    marks: list[Any] = []
     items: Any = raw_laps
     if isinstance(raw_laps, dict) and "laps" in raw_laps:
         items = raw_laps["laps"]
@@ -234,23 +347,50 @@ def enrich_gt_with_csv_refs(
         for item in items:
             if isinstance(item, dict):
                 csv_refs.append(item.get("csv_lap_number"))
+                marks.append(item.get("mark") or item.get("status"))
             else:
                 csv_refs.append(None)
+                marks.append(None)
 
     gt_laps = load_gt_list(raw_laps)
 
-    # Fill missing csv_lap_number from chronological CSV prefill order.
+    # Fill missing csv_lap_number from chronological CSV prefill order —
+    # but never invent a CSV ref for explicit skips (GT without CSV).
     chrono_nums: list[Any] = []
     if lap_store is not None:
         csv_laps = lap_store.list_laps(session_id=session_id, limit=500)
         for row in prefills_from_csv(csv_laps):
             chrono_nums.append(row.get("csv_lap_number"))
 
+    # Positional fill only among non-skip rows that lack an explicit csv ref,
+    # walking CSV numbers in order so inserted skips do not shift refs.
+    chrono_i = 0
     for i, gt in enumerate(gt_laps):
+        if i < len(marks) and marks[i] is not None:
+            gt["mark"] = normalize_mark(marks[i])
+        mark = normalize_mark(gt.get("mark"))
         ref = csv_refs[i] if i < len(csv_refs) else None
+        if mark == MARK_SKIP:
+            # Keep explicit csv_lap_number if the client sent one; otherwise none.
+            if ref is not None and str(ref).strip() != "":
+                gt["csv_lap_number"] = ref
+            else:
+                gt.pop("csv_lap_number", None)
+            continue
         if ref is None or str(ref).strip() == "":
-            if i < len(chrono_nums):
-                ref = chrono_nums[i]
+            while chrono_i < len(chrono_nums):
+                candidate = chrono_nums[chrono_i]
+                chrono_i += 1
+                if candidate is not None and str(candidate).strip() != "":
+                    ref = candidate
+                    break
+        else:
+            # Advance chrono past this number when present so later fills stay aligned.
+            key = str(ref).strip()
+            for j in range(chrono_i, len(chrono_nums)):
+                if str(chrono_nums[j] or "").strip() == key:
+                    chrono_i = j + 1
+                    break
         if ref is not None and str(ref).strip() != "":
             gt["csv_lap_number"] = ref
     return gt_laps
@@ -270,15 +410,8 @@ def confirm_helper_gt(
     gt_laps = enrich_gt_with_csv_refs(
         raw_laps, lap_store=lap_store, session_id=session_id
     )
-    # Persist GT rows without csv_lap_number noise in gt.json (keep note/time).
     gt_for_files = [
-        {
-            "gt_index": g["gt_index"],
-            "lap_time": g["lap_time"],
-            "lap_time_ms": g["lap_time_ms"],
-            "note": g.get("note") or note,
-        }
-        for g in gt_laps
+        _gt_row_for_files(g, default_note=note) for g in gt_laps
     ]
 
     draft_path = save_gt_draft(
@@ -297,6 +430,8 @@ def confirm_helper_gt(
     csv_updated = 0
     if lap_store is not None:
         updates = _lap_updates_from_gt(gt_laps)
+        # Stamp session CSV rows with the confirm note; double/skip annotation
+        # lives on gt.json / gt_draft.json via mark= (avoids per-row CSV notes).
         result = lap_store.update_session_laps(
             session_id,
             note=note,
@@ -310,6 +445,10 @@ def confirm_helper_gt(
         "gt_draft_path": str(draft_path),
         "gt_path": str(gt_file),
         "gt_laps": len(gt_for_files),
+        "gt_doubles": sum(
+            1 for g in gt_for_files if g.get("mark") == MARK_DOUBLE
+        ),
+        "gt_skips": sum(1 for g in gt_for_files if g.get("mark") == MARK_SKIP),
         "csv_laps_updated": csv_updated,
         "csv_note": note,
     }
@@ -329,6 +468,8 @@ def confirm_helper_gt(
             "write_matches": report["write_matches"],
             "write_misses": report["write_misses"],
             "write_extras": report["write_extras"],
+            "write_doubles": report.get("write_doubles", 0),
+            "gt_skips": report.get("gt_skips", 0),
             "artefact_dir": report["artefact_dir"],
             "score_json": f"{report['artefact_dir']}/score.json",
             "score_md": f"{report['artefact_dir']}/score.md",

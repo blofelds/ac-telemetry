@@ -85,16 +85,42 @@ http://<pi>:8741/accuracy/<session_id>
 `accuracy.enabled` is false.
 
 Layout: **two tee crops on the left** per lap (first + last of that hold’s
-JPEG tee; or both when only two exist), **editable lap times on the right**.
-**Confirm** calls `POST /api/accuracy/sessions/{id}/gt/confirm`, which:
+JPEG tee; or both when only two exist), **editable lap times + mark
+(normal / double / skip) on the right**. **Add skip lap** inserts a GT-only
+row (on-screen lap with no CSV write). **Confirm** calls
+`POST /api/accuracy/sessions/{id}/gt/confirm`, which:
 
-1. Writes `gt_draft.json` and `gt.json` under the accuracy session dir
-2. Sets `note=gt_confirmed` on **every** row for that session in `laps.csv`
-3. Updates `lap_time` / `lap_time_ms` on CSV rows when the edited GT differs
-4. Optionally scores (write% / ocr-sample%) like the existing GT submit
+1. Writes `gt_draft.json` and `gt.json` (including per-row `mark`) under the
+   accuracy session dir
+2. Sets `note=gt_confirmed` on session rows in `laps.csv`
+3. Updates `lap_time` / `lap_time_ms` on CSV rows tied to normal/double marks
+4. Scores write% / ocr-sample% with doubles/skips applied (see Marks below)
 
-Page data: `GET /api/accuracy/sessions/{id}/helper` (laps + crop URLs).
+Page data: `GET /api/accuracy/sessions/{id}/helper` (laps + crop URLs + marks).
 Crops: `GET /api/accuracy/sessions/{id}/roi/{filename}.jpg`.
+
+##### Marks (double / skip)
+
+| Mark | Meaning | write% | extras / misses |
+| --- | --- | --- | --- |
+| **normal** | True on-screen lap that should match a CSV write | In denom; match → numerator | Unmatched → miss |
+| **double** | False extra CSV write (OCR double / flicker) | **Excluded** from denom and numerator; still annotated in `score.md` / `review.md` | CSV consumed — **not** an unexplained extra |
+| **skip** | On-screen lap with **no** CSV write | In denom; never matches | Always a **miss**; allows a GT row without a CSV ref |
+
+Persisted on each lap in `gt_draft.json` / `gt.json` as `"mark": "normal"|"double"|"skip"`.
+
+##### Two-layer accuracy model
+
+Accuracy tracking is intentionally two layers (this helper is the second):
+
+1. **CI ROI fixtures (later)** — small, replayable crops/holds for fast
+   before/after scores on PRs. Not the merge-of-record for a full stint.
+2. **Full-video / full-stint merge-of-record** — operator Confirm on
+   `/accuracy/<session_id>` produces the GT + `score.md` that history and
+   gates will treat as authoritative for that session (doubles/skips included).
+
+(CI harness, history append, and PR gates are separate slices — not in this
+helper change.)
 
 Offline CLI (works even if runtime has accuracy off — scores stored artefacts):
 
@@ -140,11 +166,12 @@ cap values use endpoints plus even spacing.
 
 | Metric | Definition |
 | --- | --- |
-| **write%** | Exact CSV LAST matches / GT laps (extras & misses reported separately) |
-| **ocr-sample%** | Samples equal to that lap’s GT in the hold window / samples in window; also rolled up stint-wide |
+| **write%** | Exact CSV LAST matches / scoring GT laps (**normal + skip**; **doubles excluded**). Extras = unexplained CSV; misses include skips. |
+| **ocr-sample%** | Samples equal to that lap’s GT in the hold window / samples in window; also rolled up stint-wide (doubles omitted from the roll-up) |
 
-Mismatches are marked ❌ in Markdown; matches still get a full review row so you
-can chase the last fraction of a percent toward >99%.
+Mismatches are marked ❌ in Markdown; doubles ◎ and skips ○ are annotated;
+matches still get a full review row so you can chase the last fraction of a
+percent toward >99%.
 
 ## Remove the feature entirely
 

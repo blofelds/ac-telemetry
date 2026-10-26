@@ -197,6 +197,8 @@ def mount_accuracy_routes(
                 "write_matches": report["write_matches"],
                 "write_misses": report["write_misses"],
                 "write_extras": report["write_extras"],
+                "write_doubles": report.get("write_doubles", 0),
+                "gt_skips": report.get("gt_skips", 0),
                 "artefact_dir": report["artefact_dir"],
                 "score_json": f"{report['artefact_dir']}/score.json",
                 "score_md": f"{report['artefact_dir']}/score.md",

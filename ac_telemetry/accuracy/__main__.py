@@ -70,7 +70,9 @@ def _score(args: argparse.Namespace, gt_laps: list | None = None) -> int:
         f"write%={report['write_pct']}% "
         f"({report['write_matches']}/{report['gt_laps']}) "
         f"ocr-sample%={report['ocr_sample_pct']}% "
-        f"misses={report['write_misses']} extras={report['write_extras']}"
+        f"misses={report['write_misses']} extras={report['write_extras']} "
+        f"doubles={report.get('write_doubles', 0)} "
+        f"skips={report.get('gt_skips', 0)}"
     )
     print(f"score → {report['artefact_dir']}/score.md")
     print(f"review → {report['artefact_dir']}/review.md")
