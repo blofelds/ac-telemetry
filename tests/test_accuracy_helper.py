@@ -263,10 +263,12 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
                     "lap_time": "1:07.800",
                     "csv_lap_number": 1,
                     "note": "gt_confirmed",
+                    "mark": "normal",
                 },
                 {
                     "lap_time": "1:08.200",
                     "csv_lap_number": 2,
+                    "mark": "normal",
                 },
             ],
             "score": True,
@@ -285,9 +287,123 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
     assert gt.is_file()
     draft_data = json.loads(draft.read_text(encoding="utf-8"))
     assert draft_data["laps"][0]["lap_time"] == "1:07.800"
+    assert draft_data["laps"][0]["mark"] == "normal"
 
     chrono = list(reversed(lap_store.list_laps(session_id=sid, limit=10)))
     assert all(r["note"] == GT_CONFIRMED_NOTE for r in chrono)
     assert chrono[0]["lap_time"] == "1:07.800"
     assert chrono[0]["lap_time_ms"] == "67800"
     assert chrono[1]["lap_time"] == "1:08.200"
+
+
+def test_helper_confirm_persists_double_and_skip(tmp_path: Path) -> None:
+    client, store, lap_store, data_dir = _enabled_client(tmp_path)
+    created = client.post(
+        "/api/sessions", json={"track": "Monza", "car": "Test", "notes": ""}
+    )
+    assert created.status_code == 201
+    sid = created.json()["session"]["session_id"]
+    client.post("/api/sessions/current/end")
+
+    lap_store.append_lap(
+        {
+            "session_id": sid,
+            "lap_number": 1,
+            "lap_time": "1:07.717",
+            "lap_time_ms": 67_717,
+            "source": "mock",
+            "raw_text": "1:07.717",
+        }
+    )
+    lap_store.append_lap(
+        {
+            "session_id": sid,
+            "lap_number": 2,
+            "lap_time": "1:07.727",
+            "lap_time_ms": 67_727,
+            "source": "mock",
+            "raw_text": "1:07.727",
+        }
+    )
+    lap_store.append_lap(
+        {
+            "session_id": sid,
+            "lap_number": 3,
+            "lap_time": "1:08.200",
+            "lap_time_ms": 68_200,
+            "source": "mock",
+            "raw_text": "1:08.200",
+        }
+    )
+
+    page = client.get("/accuracy")
+    assert page.status_code == 200
+    assert "mark double/skip" in page.text
+    assert "Add skip lap" in page.text
+
+    helper = client.get(f"/api/accuracy/sessions/{sid}/helper")
+    assert helper.status_code == 200
+    assert helper.json()["marks"] == ["normal", "double", "skip"]
+
+    confirmed = client.post(
+        f"/api/accuracy/sessions/{sid}/gt/confirm",
+        json={
+            "laps": [
+                {
+                    "lap_time": "1:07.717",
+                    "csv_lap_number": 1,
+                    "mark": "normal",
+                },
+                {
+                    "lap_time": "1:07.727",
+                    "csv_lap_number": 2,
+                    "mark": "double",
+                },
+                {
+                    "lap_time": "1:07.900",
+                    "mark": "skip",
+                },
+                {
+                    "lap_time": "1:08.200",
+                    "csv_lap_number": 3,
+                    "mark": "normal",
+                },
+            ],
+            "score": True,
+        },
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    payload = confirmed.json()
+    assert payload["gt_doubles"] == 1
+    assert payload["gt_skips"] == 1
+    assert payload["score"]["write_matches"] == 2
+    assert payload["score"]["write_misses"] == 1
+    assert payload["score"]["write_extras"] == 0
+    assert payload["score"]["write_doubles"] == 1
+    # 2 matches / 3 scoring GT (2 normal + 1 skip)
+    assert payload["score"]["write_pct"] == round(100.0 * 2 / 3, 2)
+
+    sdir = session_dir(data_dir, sid, subdir="accuracy")
+    draft = json.loads(gt_draft_path(sdir).read_text(encoding="utf-8"))
+    gt = json.loads(gt_path(sdir).read_text(encoding="utf-8"))
+    assert [lap["mark"] for lap in draft["laps"]] == [
+        "normal",
+        "double",
+        "skip",
+        "normal",
+    ]
+    assert [lap["mark"] for lap in gt["laps"]] == [
+        "normal",
+        "double",
+        "skip",
+        "normal",
+    ]
+    assert draft["laps"][1]["csv_lap_number"] == 2
+    assert "csv_lap_number" not in draft["laps"][2]
+
+    # Re-load helper: marks + skip row restored from draft.
+    helper2 = client.get(f"/api/accuracy/sessions/{sid}/helper")
+    assert helper2.status_code == 200
+    marks = [lap["mark"] for lap in helper2.json()["laps"]]
+    assert marks == ["normal", "double", "skip", "normal"]
+    assert helper2.json()["laps"][2]["lap_time"] == "1:07.900"
