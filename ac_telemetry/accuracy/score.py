@@ -1,8 +1,13 @@
 """GT alignment + write% / ocr-sample% reports for every lap.
 
-write%     = exact CSV LAST matches / GT laps (extras & misses separate)
+write%     = exact CSV LAST matches / scoring GT laps (extras & misses separate)
 ocr-sample%= samples equal to that lap's GT in the hold window / samples
              in window (also rolled up stint-wide)
+
+Operator marks on GT rows:
+  normal — true on-screen lap that should match a CSV write (default)
+  double — false extra CSV write; annotated but excluded from write% denom/num
+  skip   — on-screen lap with no CSV write; counts as a miss (denom only)
 
 Every GT lap gets a review row (ROI frames, OCR histogram, CSV write) —
 not only mismatches. Mismatches are flagged visually in Markdown.
@@ -31,6 +36,26 @@ from ac_telemetry.detect.readers import format_lap_time_ms, parse_lap_time_text
 from ac_telemetry.store.laps import LapStore
 
 logger = logging.getLogger(__name__)
+
+# Per-row operator marks (persisted on gt.json / gt_draft.json).
+MARK_NORMAL = "normal"
+MARK_DOUBLE = "double"
+MARK_SKIP = "skip"
+VALID_MARKS = frozenset({MARK_NORMAL, MARK_DOUBLE, MARK_SKIP})
+
+
+def normalize_mark(value: Any) -> str:
+    """Normalize operator mark to normal | double | skip."""
+    raw = str(value or MARK_NORMAL).strip().lower()
+    if raw in ("double", "dbl", "extra", "false_extra"):
+        return MARK_DOUBLE
+    if raw in ("skip", "miss", "missing", "no_csv"):
+        return MARK_SKIP
+    if raw in ("normal", "ok", "match_target", ""):
+        return MARK_NORMAL
+    if raw in VALID_MARKS:
+        return raw
+    return MARK_NORMAL
 
 
 def normalize_lap_text(text: str | None) -> str | None:
@@ -63,19 +88,26 @@ def normalize_lap_ms(value: Any) -> int | None:
 
 
 def load_gt_list(raw: Any) -> list[dict[str, Any]]:
-    """Accept list of strings/ms/dicts → normalized GT rows."""
+    """Accept list of strings/ms/dicts → normalized GT rows.
+
+    Dict items may include ``mark`` (normal|double|skip) and optional
+    ``csv_lap_number`` (needed so doubles can consume their CSV write).
+    """
     if isinstance(raw, dict) and "laps" in raw:
         raw = raw["laps"]
     if not isinstance(raw, list):
         raise ValueError("GT must be a list of lap times (or {laps: [...]})")
     out: list[dict[str, Any]] = []
     for i, item in enumerate(raw, start=1):
+        csv_lap_number: Any = None
         if isinstance(item, dict):
             text = normalize_lap_text(
                 item.get("lap_time") or item.get("text") or item.get("time")
             )
             ms = normalize_lap_ms(item.get("lap_time_ms") or item.get("ms"))
             note = str(item.get("note") or "")
+            mark = normalize_mark(item.get("mark") or item.get("status"))
+            csv_lap_number = item.get("csv_lap_number")
             if text is None and ms is not None:
                 text = format_lap_time_ms(ms)
             if ms is None and text is not None:
@@ -85,6 +117,7 @@ def load_gt_list(raw: Any) -> list[dict[str, Any]]:
             ms = normalize_lap_ms(item)
             text = format_lap_time_ms(ms) if ms is not None else None
             note = ""
+            mark = MARK_NORMAL
         else:
             text = normalize_lap_text(str(item))
             ms = None
@@ -92,16 +125,19 @@ def load_gt_list(raw: Any) -> list[dict[str, Any]]:
                 parsed = parse_lap_time_text(text)
                 ms = None if parsed is None else parsed[1]
             note = ""
+            mark = MARK_NORMAL
         if text is None or ms is None:
             raise ValueError(f"GT lap #{i} is not a valid lap time: {item!r}")
-        out.append(
-            {
-                "gt_index": i,
-                "lap_time": text,
-                "lap_time_ms": ms,
-                "note": note,
-            }
-        )
+        row: dict[str, Any] = {
+            "gt_index": i,
+            "lap_time": text,
+            "lap_time_ms": ms,
+            "note": note,
+            "mark": mark,
+        }
+        if csv_lap_number is not None and str(csv_lap_number).strip() != "":
+            row["csv_lap_number"] = csv_lap_number
+        out.append(row)
     return out
 
 
@@ -126,6 +162,7 @@ def prefills_from_csv(laps: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "lap_time": text,
                 "lap_time_ms": ms,
                 "note": "prefill from CSV — confirm/edit",
+                "mark": MARK_NORMAL,
                 "csv_lap_number": row.get("lap_number"),
                 "csv_recorded_at": row.get("recorded_at"),
             }
@@ -133,33 +170,92 @@ def prefills_from_csv(laps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return draft
 
 
+def scoring_gt_laps(gt_laps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """GT rows that count toward write% (excludes doubles)."""
+    return [g for g in gt_laps if normalize_mark(g.get("mark")) != MARK_DOUBLE]
+
+
+def double_gt_laps(gt_laps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [g for g in gt_laps if normalize_mark(g.get("mark")) == MARK_DOUBLE]
+
+
+def _csv_lap_number_key(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _consume_double_csv_indices(
+    doubles: list[dict[str, Any]],
+    csv_chrono: list[tuple[int, dict[str, Any]]],
+) -> set[int]:
+    """CSV indices claimed by double marks (not extras, not match targets)."""
+    used: set[int] = set()
+    by_number: dict[str, int] = {}
+    for j, (_ci, row) in enumerate(csv_chrono):
+        key = _csv_lap_number_key(row.get("lap_number"))
+        if key is not None and key not in by_number:
+            by_number[key] = j
+
+    for gt in doubles:
+        key = _csv_lap_number_key(gt.get("csv_lap_number"))
+        if key is not None and key in by_number:
+            used.add(by_number[key])
+            continue
+        # Fall back: next unused CSV row whose text matches the double time.
+        gt_text = gt.get("lap_time")
+        for j, (_ci, row) in enumerate(csv_chrono):
+            if j in used:
+                continue
+            row_text = normalize_lap_text(row.get("lap_time") or row.get("raw_text"))
+            if row_text == gt_text:
+                used.add(j)
+                break
+    return used
+
+
 def align_csv_to_gt(
     gt_laps: list[dict[str, Any]],
     csv_laps: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    """Sequential exact-match alignment.
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    """Sequential exact-match alignment with double/skip marks.
 
-    Returns (matches, misses, extras).
-    matches: {gt, csv, gt_index, csv_index}
-    misses: GT rows with no CSV exact match in order
-    extras: CSV rows not consumed by a match
+    Returns (matches, misses, extras, doubles_annotated).
+    matches: {gt, csv, gt_index, csv_index} for scoring GT (normal + skip)
+    misses: scoring GT rows with no CSV exact match (includes skips)
+    extras: CSV rows not consumed by a match or a double mark
+    doubles_annotated: double-marked GT rows (excluded from write%)
     """
     # Chronological CSV (oldest first).
     csv_chrono: list[tuple[int, dict[str, Any]]] = []
     for idx, row in enumerate(reversed(csv_laps)):
-        # reversed of newest-first → oldest-first; keep original newest index? 
-        # Use chronological index 0..n-1
         csv_chrono.append((idx, row))
+
+    doubles = double_gt_laps(gt_laps)
+    targets = scoring_gt_laps(gt_laps)
+    used_csv: set[int] = _consume_double_csv_indices(doubles, csv_chrono)
 
     matches: list[dict[str, Any]] = []
     misses: list[dict[str, Any]] = []
     csv_i = 0
-    used_csv: set[int] = set()
 
-    for gt in gt_laps:
+    for gt in targets:
+        mark = normalize_mark(gt.get("mark"))
+        # Skip = on-screen lap with no CSV write → always counts as a miss.
+        if mark == MARK_SKIP:
+            misses.append(dict(gt))
+            continue
         gt_text = gt["lap_time"]
         found = None
         for j in range(csv_i, len(csv_chrono)):
+            if j in used_csv:
+                continue
             _ci, row = csv_chrono[j]
             row_text = normalize_lap_text(row.get("lap_time") or row.get("raw_text"))
             if row_text == gt_text:
@@ -185,7 +281,8 @@ def align_csv_to_gt(
         if j not in used_csv:
             extras.append(row)
 
-    return matches, misses, extras
+    doubles_annotated = [dict(g) for g in doubles]
+    return matches, misses, extras, doubles_annotated
 
 
 def _parse_recorded_at(value: str | None) -> float | None:
@@ -316,13 +413,23 @@ def score_session(
     samples = OcrSampleLog.read_all(ocr_samples_path(sdir))
     manifest = _load_manifest(roi_manifest_path(sdir))
 
-    matches, misses, extras = align_csv_to_gt(gt_laps, csv_laps)
-    gt_n = len(gt_laps)
+    matches, misses, extras, doubles_annotated = align_csv_to_gt(gt_laps, csv_laps)
+    scoring = scoring_gt_laps(gt_laps)
+    gt_n = len(scoring)  # write% denominator excludes doubles
     match_n = len(matches)
     write_pct = (100.0 * match_n / gt_n) if gt_n else 0.0
 
-    windows = _sample_windows(gt_laps, matches, samples)
+    # OCR windows only for scoring targets (doubles are annotated separately).
+    windows = _sample_windows(scoring, matches, samples)
     match_by_gt = {m["gt_index"]: m for m in matches}
+
+    # Resolve CSV row for doubles (annotation only).
+    csv_chrono = list(reversed(csv_laps))
+    csv_by_number: dict[str, dict[str, Any]] = {}
+    for row in csv_chrono:
+        key = _csv_lap_number_key(row.get("lap_number"))
+        if key is not None and key not in csv_by_number:
+            csv_by_number[key] = row
 
     per_lap: list[dict[str, Any]] = []
     stint_equal = 0
@@ -331,9 +438,21 @@ def score_session(
     for gt in gt_laps:
         gi = gt["gt_index"]
         gt_text = gt["lap_time"]
+        mark = normalize_mark(gt.get("mark"))
         matched = gi in match_by_gt
         csv_row = match_by_gt[gi]["csv"] if matched else None
-        win = windows.get(gi)
+        if mark == MARK_DOUBLE and csv_row is None:
+            key = _csv_lap_number_key(gt.get("csv_lap_number"))
+            if key is not None:
+                csv_row = csv_by_number.get(key)
+            if csv_row is None:
+                # Text-match fallback for annotation.
+                for row in csv_chrono:
+                    if normalize_lap_text(row.get("lap_time") or row.get("raw_text")) == gt_text:
+                        csv_row = row
+                        break
+
+        win = windows.get(gi) if mark != MARK_DOUBLE else None
         win_samples = []
         if win is not None:
             start, end = win
@@ -352,8 +471,9 @@ def score_session(
         ]
         total = len(win_samples)
         eq = len(equal)
-        stint_equal += eq
-        stint_total += total
+        if mark != MARK_DOUBLE:
+            stint_equal += eq
+            stint_total += total
         ocr_pct = (100.0 * eq / total) if total else None
 
         texts = [
@@ -380,13 +500,20 @@ def score_session(
                         }
                     )
 
-        status = "match" if matched else "miss"
+        if mark == MARK_DOUBLE:
+            status = "double"
+        elif mark == MARK_SKIP:
+            status = "skip"
+        elif matched:
+            status = "match"
+        else:
+            status = "miss"
         csv_text = None
         if csv_row is not None:
             csv_text = normalize_lap_text(
                 csv_row.get("lap_time") or csv_row.get("raw_text")
             )
-            if csv_text != gt_text:
+            if mark == MARK_NORMAL and csv_text != gt_text:
                 status = "mismatch"
 
         per_lap.append(
@@ -394,11 +521,14 @@ def score_session(
                 "gt_index": gi,
                 "gt_lap_time": gt_text,
                 "gt_lap_time_ms": gt["lap_time_ms"],
+                "mark": mark,
                 "status": status,
                 "csv_lap_time": csv_text,
-                "csv_lap_number": None
-                if csv_row is None
-                else csv_row.get("lap_number"),
+                "csv_lap_number": (
+                    gt.get("csv_lap_number")
+                    if csv_row is None
+                    else csv_row.get("lap_number")
+                ),
                 "csv_recorded_at": None
                 if csv_row is None
                 else csv_row.get("recorded_at"),
@@ -419,10 +549,16 @@ def score_session(
         "session_id": session_id,
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "gt_laps": gt_n,
+        "gt_laps_total": len(gt_laps),
+        "gt_doubles": len(doubles_annotated),
+        "gt_skips": sum(
+            1 for g in gt_laps if normalize_mark(g.get("mark")) == MARK_SKIP
+        ),
         "csv_laps": len(csv_laps),
         "write_matches": match_n,
         "write_misses": len(misses),
         "write_extras": len(extras),
+        "write_doubles": len(doubles_annotated),
         "write_pct": round(write_pct, 2),
         "ocr_sample_equal": stint_equal,
         "ocr_sample_total": stint_total,
@@ -436,7 +572,20 @@ def score_session(
             for r in extras
         ],
         "misses": [
-            {"gt_index": m["gt_index"], "lap_time": m["lap_time"]} for m in misses
+            {
+                "gt_index": m["gt_index"],
+                "lap_time": m["lap_time"],
+                "mark": normalize_mark(m.get("mark")),
+            }
+            for m in misses
+        ],
+        "doubles": [
+            {
+                "gt_index": d["gt_index"],
+                "lap_time": d["lap_time"],
+                "csv_lap_number": d.get("csv_lap_number"),
+            }
+            for d in doubles_annotated
         ],
         "per_lap": per_lap,
         "artefact_dir": str(sdir),
@@ -457,37 +606,53 @@ def score_session(
 
 
 def render_score_markdown(report: dict[str, Any]) -> str:
+    doubles_n = report.get("write_doubles", report.get("gt_doubles", 0))
+    skips_n = report.get("gt_skips", 0)
     lines = [
         f"# Stint accuracy — `{report['session_id']}`",
         "",
         f"- **write%**: {report['write_pct']}% "
-        f"({report['write_matches']}/{report['gt_laps']} exact CSV matches)",
+        f"({report['write_matches']}/{report['gt_laps']} exact CSV matches; "
+        f"denom excludes doubles)",
         f"- **ocr-sample%**: "
         f"{report['ocr_sample_pct'] if report['ocr_sample_pct'] is not None else 'n/a'}% "
         f"({report['ocr_sample_equal']}/{report['ocr_sample_total']} samples)",
-        f"- misses: {report['write_misses']} · extras: {report['write_extras']}",
+        f"- misses: {report['write_misses']} · extras: {report['write_extras']} "
+        f"· doubles: {doubles_n} · skips: {skips_n}",
         f"- artefacts: `{report['artefact_dir']}`",
         "",
-        "| GT# | GT | CSV | status | ocr% | ROI frames |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| GT# | GT | mark | CSV | status | ocr% | ROI frames |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for lap in report["per_lap"]:
         flag = {
             "match": "✓",
             "miss": "❌ miss",
             "mismatch": "❌ mismatch",
+            "double": "◎ double",
+            "skip": "○ skip",
         }.get(lap["status"], lap["status"])
         ocr = (
             "n/a"
             if lap["ocr_sample_pct"] is None
             else f"{lap['ocr_sample_pct']}% ({lap['ocr_sample_equal']}/{lap['ocr_sample_total']})"
         )
+        mark = lap.get("mark") or "normal"
         lines.append(
-            f"| {lap['gt_index']} | {lap['gt_lap_time']} | "
+            f"| {lap['gt_index']} | {lap['gt_lap_time']} | {mark} | "
             f"{lap['csv_lap_time'] or '—'} | {flag} | {ocr} | "
             f"{lap['roi_frame_count']} |"
         )
     lines.append("")
+    if report.get("doubles"):
+        lines.append("## Doubles (false extra CSV — excluded from write%)")
+        lines.append("")
+        for d in report["doubles"]:
+            lines.append(
+                f"- GT #{d.get('gt_index')} time={d.get('lap_time')} "
+                f"csv_lap_number={d.get('csv_lap_number')}"
+            )
+        lines.append("")
     if report["extras"]:
         lines.append("## Extras (CSV without GT match)")
         lines.append("")
@@ -508,13 +673,22 @@ def render_review_markdown(report: dict[str, Any], sdir: Path) -> str:
         f"# Every-lap review — `{report['session_id']}`",
         "",
         "Inspect **every** GT lap (not only failures). Mismatches marked ❌.",
+        "Doubles (◎) are annotated false extras; skips (○) are GT without CSV.",
         "",
     ]
     for lap in report["per_lap"]:
-        flag = "✓" if lap["status"] == "match" else "❌"
+        if lap["status"] == "match":
+            flag = "✓"
+        elif lap["status"] == "double":
+            flag = "◎"
+        elif lap["status"] == "skip":
+            flag = "○"
+        else:
+            flag = "❌"
+        mark = lap.get("mark") or "normal"
         lines.append(f"## {flag} GT #{lap['gt_index']}: `{lap['gt_lap_time']}`")
         lines.append("")
-        lines.append(f"- status: **{lap['status']}**")
+        lines.append(f"- mark: **{mark}** · status: **{lap['status']}**")
         lines.append(
             f"- CSV write: `{lap['csv_lap_time'] or '—'}` "
             f"(lap_number={lap['csv_lap_number']}, at {lap['csv_recorded_at']})"
