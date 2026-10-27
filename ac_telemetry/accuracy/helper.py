@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 GT_CONFIRMED_NOTE = "gt_confirmed"
 GT_DOUBLE_NOTE = "gt_double"
 
+# CSV notes that mean the helper (or an equivalent confirm) has stamped the stint.
+_GT_CONFIRMED_CSV_NOTES = frozenset({GT_CONFIRMED_NOTE, GT_DOUBLE_NOTE})
+
 
 def select_display_crops(
     frames: list[dict[str, Any]], *, max_display: int = 2
@@ -131,6 +134,73 @@ def _load_saved_gt_laps(sdir: Path) -> list[dict[str, Any]]:
         except (ValueError, json.JSONDecodeError):
             logger.warning("Ignoring invalid GT file at %s", path)
     return []
+
+
+def _csv_has_gt_confirmed_note(
+    lap_store: LapStore | None, session_id: str
+) -> bool:
+    """True when any laps.csv row for the session carries a confirm note."""
+    if lap_store is None:
+        return False
+    for row in lap_store.list_laps(session_id=session_id, limit=500):
+        note = str(row.get("note") or "").strip()
+        if note in _GT_CONFIRMED_CSV_NOTES:
+            return True
+    return False
+
+
+def detect_gt_confirmed(
+    *,
+    data_dir: Path,
+    session_id: str,
+    lap_store: LapStore | None = None,
+    subdir: str = "accuracy",
+) -> dict[str, Any]:
+    """Whether this session already has confirmed GT (Confirm / gt artefacts).
+
+    Confirmed when any of:
+    - ``gt.json`` exists under the accuracy session dir
+    - ``gt_draft.json`` exists (helper Confirm draft)
+    - any ``laps.csv`` row has ``note=gt_confirmed`` (or ``gt_double``)
+
+    Returns ``gt_confirmed`` plus the matching ``via`` reasons so the helper
+    UI can show a clear badge without re-deriving the rules in JS.
+    """
+    sdir = session_dir(data_dir, session_id, subdir=subdir)
+    via: list[str] = []
+    if gt_path(sdir).is_file():
+        via.append("gt.json")
+    if gt_draft_path(sdir).is_file():
+        via.append("gt_draft.json")
+    if _csv_has_gt_confirmed_note(lap_store, session_id):
+        via.append("laps.csv")
+    return {
+        "session_id": session_id,
+        "gt_confirmed": bool(via),
+        "via": via,
+    }
+
+
+def list_gt_confirmed_status(
+    *,
+    data_dir: Path,
+    session_ids: list[str],
+    lap_store: LapStore | None = None,
+    subdir: str = "accuracy",
+) -> dict[str, dict[str, Any]]:
+    """Map session_id → detect_gt_confirmed result (for the helper session list)."""
+    out: dict[str, dict[str, Any]] = {}
+    for sid in session_ids:
+        sid_s = str(sid or "").strip()
+        if not sid_s:
+            continue
+        out[sid_s] = detect_gt_confirmed(
+            data_dir=data_dir,
+            session_id=sid_s,
+            lap_store=lap_store,
+            subdir=subdir,
+        )
+    return out
 
 
 def _merge_saved_marks(
@@ -254,12 +324,20 @@ def build_helper_page_data(
             }
         )
 
+    confirmed = detect_gt_confirmed(
+        data_dir=data_dir,
+        session_id=session_id,
+        lap_store=lap_store,
+        subdir=subdir,
+    )
     return {
         "session_id": session_id,
         "laps": page_laps,
         "roi_frame_count": len(manifest),
         "hold_count": len(holds),
         "artefact_dir": str(sdir),
+        "gt_confirmed": confirmed["gt_confirmed"],
+        "gt_confirmed_via": confirmed["via"],
         "marks": [MARK_NORMAL, MARK_DOUBLE, MARK_SKIP],
         "note": (
             "Edit times and mark double/skip, then Confirm — writes "

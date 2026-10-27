@@ -12,6 +12,8 @@ from ac_telemetry.accuracy.helper import (
     GT_CONFIRMED_NOTE,
     build_helper_page_data,
     confirm_helper_gt,
+    detect_gt_confirmed,
+    list_gt_confirmed_status,
     resolve_roi_file,
 )
 from ac_telemetry.accuracy.score import (
@@ -108,6 +110,37 @@ def mount_accuracy_routes(
             "session_id": session_id,
             "laps": prefills_from_csv(laps),
             "note": "Confirm/edit then POST /api/accuracy/sessions/{id}/gt",
+        }
+
+    @app.get("/api/accuracy/sessions/gt-status")
+    def api_accuracy_gt_status(session_id: str | None = None) -> dict[str, Any]:
+        """Confirmed-GT flags for the helper session list (or one session).
+
+        Query ``?session_id=`` for a single session; omit to scan recent
+        sessions from the store (same limit as the helper picker).
+        """
+        if session_id:
+            _sid_or_404(session_id)
+            one = detect_gt_confirmed(
+                data_dir=settings.data_dir,
+                session_id=session_id,
+                lap_store=lap_store,
+                subdir=accuracy.settings.subdir,
+            )
+            return {"ok": True, "sessions": {session_id: one}}
+        rows = store.list_sessions(limit=100)
+        ids = [
+            str(r.get("session_id") or r.get("id") or "").strip()
+            for r in rows
+        ]
+        return {
+            "ok": True,
+            "sessions": list_gt_confirmed_status(
+                data_dir=settings.data_dir,
+                session_ids=ids,
+                lap_store=lap_store,
+                subdir=accuracy.settings.subdir,
+            ),
         }
 
     @app.get("/api/accuracy/sessions/{session_id}/helper")

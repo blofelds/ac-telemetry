@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from ac_telemetry.accuracy.helper import (
     GT_CONFIRMED_NOTE,
+    detect_gt_confirmed,
     resolve_roi_file,
     select_display_crops,
 )
@@ -19,6 +20,51 @@ from ac_telemetry.capture import CaptureService
 from ac_telemetry.settings import load_settings
 from ac_telemetry.store import LapStore, SessionStore
 from ac_telemetry.store.laps import LAP_FIELDS
+
+
+def test_detect_gt_confirmed_via_files_or_csv_note(tmp_path: Path) -> None:
+    data_dir = tmp_path / "sessions"
+    sid = "sess-confirm"
+    sdir = session_dir(data_dir, sid, subdir="accuracy")
+    sdir.mkdir(parents=True)
+
+    empty = detect_gt_confirmed(data_dir=data_dir, session_id=sid, subdir="accuracy")
+    assert empty == {"session_id": sid, "gt_confirmed": False, "via": []}
+
+    gt_path(sdir).write_text(
+        json.dumps({"laps": ["1:07.717"]}) + "\n", encoding="utf-8"
+    )
+    via_gt = detect_gt_confirmed(data_dir=data_dir, session_id=sid, subdir="accuracy")
+    assert via_gt["gt_confirmed"] is True
+    assert via_gt["via"] == ["gt.json"]
+
+    gt_path(sdir).unlink()
+    gt_draft_path(sdir).write_text(
+        json.dumps({"laps": ["1:07.717"]}) + "\n", encoding="utf-8"
+    )
+    via_draft = detect_gt_confirmed(
+        data_dir=data_dir, session_id=sid, subdir="accuracy"
+    )
+    assert via_draft["via"] == ["gt_draft.json"]
+
+    gt_draft_path(sdir).unlink()
+    store = LapStore(data_dir)
+    store.ensure()
+    store.append_lap(
+        {
+            "session_id": sid,
+            "lap_number": 1,
+            "lap_time": "1:07.717",
+            "lap_time_ms": 67_717,
+            "source": "mock",
+            "raw_text": "1:07.717",
+            "note": GT_CONFIRMED_NOTE,
+        }
+    )
+    via_csv = detect_gt_confirmed(
+        data_dir=data_dir, session_id=sid, lap_store=store, subdir="accuracy"
+    )
+    assert via_csv["via"] == ["laps.csv"]
 
 
 def test_select_display_crops_first_and_last() -> None:
@@ -222,14 +268,29 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
     page = client.get("/accuracy")
     assert page.status_code == 200
     assert "GT eyeball" in page.text
+    assert "max-height: 112px" in page.text
+    assert "GT confirmed" in page.text
+    assert "GT not confirmed" in page.text
 
     page_sid = client.get(f"/accuracy/{sid}")
     assert page_sid.status_code == 200
+
+    before = detect_gt_confirmed(
+        data_dir=data_dir, session_id=sid, lap_store=lap_store, subdir="accuracy"
+    )
+    assert before["gt_confirmed"] is False
+    assert before["via"] == []
+
+    status = client.get("/api/accuracy/sessions/gt-status")
+    assert status.status_code == 200
+    assert status.json()["sessions"][sid]["gt_confirmed"] is False
 
     helper = client.get(f"/api/accuracy/sessions/{sid}/helper")
     assert helper.status_code == 200
     body = helper.json()
     assert body["session_id"] == sid
+    assert body["gt_confirmed"] is False
+    assert body["gt_confirmed_via"] == []
     assert len(body["laps"]) == 2
     assert len(body["laps"][0]["crops"]) == 2
     assert body["laps"][0]["crops"][0]["seq"] == 1
@@ -294,6 +355,23 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
     assert chrono[0]["lap_time"] == "1:07.800"
     assert chrono[0]["lap_time_ms"] == "67800"
     assert chrono[1]["lap_time"] == "1:08.200"
+
+    after = detect_gt_confirmed(
+        data_dir=data_dir, session_id=sid, lap_store=lap_store, subdir="accuracy"
+    )
+    assert after["gt_confirmed"] is True
+    assert "gt.json" in after["via"]
+    assert "gt_draft.json" in after["via"]
+    assert "laps.csv" in after["via"]
+
+    helper_after = client.get(f"/api/accuracy/sessions/{sid}/helper")
+    assert helper_after.status_code == 200
+    assert helper_after.json()["gt_confirmed"] is True
+    assert "gt.json" in helper_after.json()["gt_confirmed_via"]
+
+    status_after = client.get(f"/api/accuracy/sessions/gt-status?session_id={sid}")
+    assert status_after.status_code == 200
+    assert status_after.json()["sessions"][sid]["gt_confirmed"] is True
 
 
 def test_helper_confirm_persists_double_and_skip(tmp_path: Path) -> None:
