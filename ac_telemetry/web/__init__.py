@@ -1,6 +1,8 @@
 """Phone-friendly LAN UI: sessions, live lap time, capture status, ROI debug."""
 
-STATUS_HTML = """<!DOCTYPE html>
+from ac_telemetry.web.session_title import SESSION_TITLE_JS
+
+_STATUS_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -183,6 +185,7 @@ STATUS_HTML = """<!DOCTYPE html>
   </footer>
 
   <script>
+    /*__SESSION_TITLE_JS__*/
     const $ = (id) => document.getElementById(id);
     let currentId = null;
 
@@ -232,7 +235,8 @@ STATUS_HTML = """<!DOCTYPE html>
         const badge = s.status === "running"
           ? "<span class=\\"badge run\\">running</span>"
           : "<span class=\\"badge stop\\">stopped</span>";
-        const title = (s.track || "—") + " · " + (s.car || "—");
+        // UI-only label; API/CSV session fields stay unchanged.
+        const title = formatSessionTitle(s);
         const meta = (s.started_at || "") +
           (s.ended_at ? " → " + s.ended_at : "") +
           " · " + (s.session_id || "");
@@ -364,6 +368,8 @@ STATUS_HTML = """<!DOCTYPE html>
 </body>
 </html>
 """
+
+STATUS_HTML = _STATUS_HTML.replace("/*__SESSION_TITLE_JS__*/", SESSION_TITLE_JS)
 
 DEBUG_HTML = """<!DOCTYPE html>
 <html lang="en">
