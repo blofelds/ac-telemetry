@@ -90,7 +90,8 @@ ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       min-height: 2.5rem;
     }
     .crops img {
-      max-height: 56px; width: auto; image-rendering: pixelated;
+      /* 2× prior helper crop height (56px → 112px) for easier eyeballing */
+      max-height: 112px; width: auto; image-rendering: pixelated;
       border: 1px solid var(--line); background: #000; border-radius: 4px;
     }
     .crops .empty { color: var(--muted); font-size: 0.85rem; }
