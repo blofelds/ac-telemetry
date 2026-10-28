@@ -2,7 +2,9 @@
 
 # Served under /accuracy when accuracy is enabled. Not the phone home UI.
 
-ACCURACY_HELPER_HTML = """<!DOCTYPE html>
+from ac_telemetry.web.session_title import SESSION_TITLE_JS
+
+_ACCURACY_HELPER_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -172,6 +174,7 @@ ACCURACY_HELPER_HTML = """<!DOCTYPE html>
   </div>
 
   <script>
+    /*__SESSION_TITLE_JS__*/
     const $ = (id) => document.getElementById(id);
     const params = new URLSearchParams(location.search);
     const pathSid = (location.pathname.match(/^\\/accuracy\\/([^/]+)/) || [])[1];
@@ -218,9 +221,9 @@ ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     }
 
     function sessionLabel(s, id) {
-      const track = s.track || "";
-      const car = s.car || "";
-      let label = id + (track || car ? " — " + [track, car].filter(Boolean).join(" / ") : "");
+      // UI-only title prefix; API/CSV session fields stay unchanged.
+      // Keep PR #44 GT-confirmed suffix on the accuracy picker option.
+      let label = formatSessionTitle(s);
       if (confirmedBySid[id] && confirmedBySid[id].gt_confirmed) {
         label += " · GT confirmed";
       }
@@ -499,3 +502,7 @@ ACCURACY_HELPER_HTML = """<!DOCTYPE html>
 </body>
 </html>
 """
+
+ACCURACY_HELPER_HTML = _ACCURACY_HELPER_HTML.replace(
+    "/*__SESSION_TITLE_JS__*/", SESSION_TITLE_JS
+)
