@@ -418,6 +418,11 @@ def test_helper_confirm_persists_double_and_skip(tmp_path: Path) -> None:
     assert page.status_code == 200
     assert "mark double/skip" in page.text
     assert "Add skip lap" in page.text
+    assert "Insert skip after" in page.text
+    assert "function insertSkipAfter" in page.text
+    assert "CSV-backed row — use Insert skip after" in page.text
+    # Skip mark is disabled on CSV-backed rows; doubles stay for false extras.
+    assert "if (mark === \"skip\" && hasCsvLap(pageLaps[idx])) return;" in page.text
 
     helper = client.get(f"/api/accuracy/sessions/{sid}/helper")
     assert helper.status_code == 200
@@ -485,3 +490,132 @@ def test_helper_confirm_persists_double_and_skip(tmp_path: Path) -> None:
     marks = [lap["mark"] for lap in helper2.json()["laps"]]
     assert marks == ["normal", "double", "skip", "normal"]
     assert helper2.json()["laps"][2]["lap_time"] == "1:07.900"
+
+
+def _mirror_make_skip_lap() -> dict:
+    """Mirror accuracy helper JS ``makeSkipLap`` row shape."""
+    return {
+        "lap_time": "",
+        "mark": "skip",
+        "csv_lap_number": None,
+        "crops": [],
+        "note": "skip — on-screen, no CSV",
+    }
+
+
+def _mirror_insert_skip_after(laps: list[dict], idx: int) -> list[dict]:
+    """Mirror accuracy helper JS ``insertSkipAfter`` placement (not append-only)."""
+    if idx < 0 or idx >= len(laps):
+        return list(laps)
+    out = list(laps)
+    out.insert(idx + 1, _mirror_make_skip_lap())
+    return out
+
+
+def _mirror_confirm_payload(laps: list[dict]) -> list[dict]:
+    """Mirror accuracy helper JS ``confirmGt`` body rules (order + skip strips CSV)."""
+    payload: list[dict] = []
+    for lap in laps:
+        mark = lap.get("mark") or "normal"
+        if mark not in ("double", "skip"):
+            mark = "normal"
+        body: dict = {
+            "lap_time": (lap.get("lap_time") or "").strip(),
+            "mark": mark,
+            "note": (
+                "gt_double"
+                if mark == "double"
+                else "skip — on-screen, no CSV"
+                if mark == "skip"
+                else "gt_confirmed"
+            ),
+        }
+        csv_n = lap.get("csv_lap_number")
+        if csv_n is not None and csv_n != "" and mark != "skip":
+            body["csv_lap_number"] = csv_n
+        payload.append(body)
+    return payload
+
+
+def test_insert_skip_after_places_gt_only_row_between_csv_laps() -> None:
+    """Miss between two CSV writes → insert skip after the earlier row, not append."""
+    rows = [
+        {"lap_time": "1:07.717", "mark": "normal", "csv_lap_number": 1},
+        {"lap_time": "1:08.200", "mark": "normal", "csv_lap_number": 2},
+    ]
+    after = _mirror_insert_skip_after(rows, 0)
+    assert len(after) == 3
+    assert after[0]["csv_lap_number"] == 1
+    assert after[0]["mark"] == "normal"
+    assert after[1]["mark"] == "skip"
+    assert after[1]["csv_lap_number"] is None
+    assert after[1]["lap_time"] == ""
+    assert after[2]["csv_lap_number"] == 2
+    # Append path still available for end-of-list misses.
+    appended = rows + [_mirror_make_skip_lap()]
+    assert appended[-1]["mark"] == "skip"
+    assert len(appended) == 3
+    assert appended[1]["csv_lap_number"] == 2
+
+
+def test_insert_skip_confirm_payload_order_and_blank_time(
+    tmp_path: Path,
+) -> None:
+    """Confirm payload keeps insert order; blank skip time is rejected client-side."""
+    rows = [
+        {"lap_time": "1:07.717", "mark": "normal", "csv_lap_number": 1},
+        {"lap_time": "1:08.200", "mark": "normal", "csv_lap_number": 2},
+    ]
+    placed = _mirror_insert_skip_after(rows, 0)
+    blank_payload = _mirror_confirm_payload(placed)
+    assert [p["mark"] for p in blank_payload] == ["normal", "skip", "normal"]
+    assert "csv_lap_number" not in blank_payload[1]
+    assert blank_payload[0]["csv_lap_number"] == 1
+    assert blank_payload[2]["csv_lap_number"] == 2
+    # Client Confirm requires a non-empty time on every row (including skips).
+    assert any(not p["lap_time"] for p in blank_payload)
+
+    placed[1]["lap_time"] = "1:07.900"
+    payload = _mirror_confirm_payload(placed)
+    assert all(p["lap_time"] for p in payload)
+
+    client, _store, lap_store, data_dir = _enabled_client(tmp_path)
+    created = client.post(
+        "/api/sessions", json={"track": "Monza", "car": "Test", "notes": ""}
+    )
+    assert created.status_code == 201
+    sid = created.json()["session"]["session_id"]
+    client.post("/api/sessions/current/end")
+    for n, t, ms in (
+        (1, "1:07.717", 67_717),
+        (2, "1:08.200", 68_200),
+    ):
+        lap_store.append_lap(
+            {
+                "session_id": sid,
+                "lap_number": n,
+                "lap_time": t,
+                "lap_time_ms": ms,
+                "source": "mock",
+                "raw_text": t,
+            }
+        )
+
+    confirmed = client.post(
+        f"/api/accuracy/sessions/{sid}/gt/confirm",
+        json={"laps": payload, "score": True},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    body = confirmed.json()
+    assert body["gt_skips"] == 1
+    assert body["score"]["write_matches"] == 2
+    assert body["score"]["write_misses"] == 1
+    assert body["score"]["write_pct"] == round(100.0 * 2 / 3, 2)
+
+    sdir = session_dir(data_dir, sid, subdir="accuracy")
+    draft = json.loads(gt_draft_path(sdir).read_text(encoding="utf-8"))
+    assert [lap["mark"] for lap in draft["laps"]] == ["normal", "skip", "normal"]
+    assert "csv_lap_number" not in draft["laps"][1]
+    assert draft["laps"][1]["lap_time"] == "1:07.900"
+    assert draft["laps"][0]["csv_lap_number"] == 1
+    assert draft["laps"][2]["csv_lap_number"] == 2
