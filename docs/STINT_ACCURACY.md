@@ -86,8 +86,13 @@ http://<pi>:8741/accuracy/<session_id>
 
 Layout: **two tee crops on the left** per lap (first + last of that hold’s
 JPEG tee; or both when only two exist), **editable lap times + mark
-(normal / double / skip) on the right**. **Add skip lap** inserts a GT-only
-row (on-screen lap with no CSV write). **Confirm** calls
+(normal / double / skip) on the right**. Per-row **Insert skip after** adds a
+GT-only skip row (`mark=skip`, no CSV ref, empty time) immediately after that
+row — use this when the HUD showed a lap the CSV missed between two writes.
+**Add skip lap** still appends a skip at the end of the list. Per-row **skip**
+is disabled when the row already has a `csv_lap_number` (a false extra CSV
+write is **double**, not skip). **Confirm** still requires a non-empty
+`M:SS.mmm` on every row (including skips) and calls
 `POST /api/accuracy/sessions/{id}/gt/confirm`, which:
 
 1. Writes `gt_draft.json` and `gt.json` (including per-row `mark`) under the
