@@ -339,8 +339,15 @@ _STATUS_HTML = """<!DOCTYPE html>
       if (!currentId) return;
       setMsg("Ending…");
       try {
+        // Flush mid-session form edits onto the stopped row (start alone is not enough).
         const r = await fetch("/api/sessions/" + encodeURIComponent(currentId) + "/end", {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            track: $("track").value.trim(),
+            car: $("car").value.trim(),
+            notes: $("notes").value.trim(),
+          }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) {
