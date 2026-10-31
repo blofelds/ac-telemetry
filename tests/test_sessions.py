@@ -76,6 +76,99 @@ def test_status_html_tyre_spelling_and_last_session_prefill() -> None:
     assert "tire set" not in STATUS_HTML
     assert "prefillFromLastSession" in STATUS_HTML
     assert "GET /api/sessions" in STATUS_HTML or "/api/sessions?limit=20" in STATUS_HTML
+    # End Session must flush form values — empty-body end discarded mid-session edits.
+    end_block = STATUS_HTML.split('$("btn-end").addEventListener', 1)[1]
+    assert "/end" in end_block
+    assert "JSON.stringify" in end_block
+    assert 'track: $("track").value.trim()' in end_block
+    assert 'car: $("car").value.trim()' in end_block
+    assert 'notes: $("notes").value.trim()' in end_block
+
+
+def test_end_session_flushes_mid_session_track_car_notes(tmp_path: Path) -> None:
+    """Edits made after Start must land on the stopped row / CSV (last wins)."""
+    client = _client(tmp_path)
+
+    created = client.post(
+        "/api/sessions",
+        json={"track": "Monza", "car": "Ferrari", "notes": "start notes"},
+    )
+    assert created.status_code == 201
+    sid = created.json()["session"]["session_id"]
+
+    ended = client.post(
+        f"/api/sessions/{sid}/end",
+        json={"track": "Spa", "car": "Porsche", "notes": "end notes"},
+    )
+    assert ended.status_code == 200
+    session = ended.json()["session"]
+    assert session["status"] == "stopped"
+    assert session["track"] == "Spa"
+    assert session["car"] == "Porsche"
+    assert session["notes"] == "end notes"
+
+    listed = client.get("/api/sessions")
+    assert listed.json()["sessions"][0]["track"] == "Spa"
+    assert listed.json()["sessions"][0]["car"] == "Porsche"
+    assert listed.json()["sessions"][0]["notes"] == "end notes"
+
+    got = client.get(f"/api/sessions/{sid}")
+    assert got.json()["session"]["track"] == "Spa"
+
+    csv_text = (tmp_path / "sessions" / "sessions.csv").read_text(encoding="utf-8")
+    # Last data row wins: stopped row carries Spa/Porsche/end notes.
+    last = [ln for ln in csv_text.splitlines() if ln and not ln.startswith("session_id")][
+        -1
+    ]
+    assert "Spa" in last
+    assert "Porsche" in last
+    assert "end notes" in last
+
+
+def test_end_without_body_keeps_start_metadata(tmp_path: Path) -> None:
+    """Empty-body end stays backward-compatible (CLI / old clients)."""
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/sessions",
+        json={"track": "Imola", "car": "Lambo", "notes": "keep"},
+    )
+    sid = created.json()["session"]["session_id"]
+    ended = client.post(f"/api/sessions/{sid}/end")
+    assert ended.status_code == 200
+    assert ended.json()["session"]["track"] == "Imola"
+    assert ended.json()["session"]["car"] == "Lambo"
+    assert ended.json()["session"]["notes"] == "keep"
+
+
+def test_patch_session_updates_running_metadata(tmp_path: Path) -> None:
+    """Optional mid-session PATCH appends a CSV row; last row wins."""
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/sessions",
+        json={"track": "Monza", "car": "Ferrari", "notes": ""},
+    )
+    sid = created.json()["session"]["session_id"]
+
+    patched = client.patch(
+        f"/api/sessions/{sid}",
+        json={"track": "Nurburgring", "notes": "set 2"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["session"]["track"] == "Nurburgring"
+    assert patched.json()["session"]["car"] == "Ferrari"  # omitted → unchanged
+    assert patched.json()["session"]["notes"] == "set 2"
+    assert patched.json()["session"]["status"] == "running"
+
+    current = client.get("/api/sessions/current")
+    assert current.json()["session"]["track"] == "Nurburgring"
+
+    missing = client.patch("/api/sessions/does-not-exist", json={"car": "X"})
+    assert missing.status_code == 404
+
+    ended = client.post(f"/api/sessions/{sid}/end")
+    assert ended.status_code == 200
+    assert ended.json()["session"]["track"] == "Nurburgring"
+    assert ended.json()["session"]["notes"] == "set 2"
 
 
 def test_list_sessions_newest_first_exposes_last_car_track(tmp_path: Path) -> None:
