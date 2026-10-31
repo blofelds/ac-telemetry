@@ -139,13 +139,53 @@ class SessionStore:
         )
         return dict(row)
 
+    def update_session(
+        self,
+        session_id: str,
+        *,
+        track: str | None = None,
+        car: str | None = None,
+        notes: str | None = None,
+    ) -> dict:
+        """Update metadata on a running session and append a CSV row (last wins).
+
+        Only ``track`` / ``car`` / ``notes`` may change. Omitted kwargs (``None``)
+        leave the existing value alone; provided strings are stripped.
+        """
+        if track is None and car is None and notes is None:
+            row = self.get_session(session_id)
+            if row is None:
+                raise SessionNotFound(f"Unknown session: {session_id}")
+            return row
+        self.ensure()
+        with self._lock:
+            row = self._open.get(session_id)
+            if row is None:
+                raise SessionNotFound(f"No running session: {session_id}")
+            self._apply_metadata(row, track=track, car=car, notes=notes)
+            self._append(row)
+        logger.info(
+            "Session updated id=%s track=%r car=%r",
+            session_id,
+            row["track"],
+            row["car"],
+        )
+        return dict(row)
+
     def end_session(
         self,
         session_id: str,
         *,
+        track: str | None = None,
+        car: str | None = None,
+        notes: str | None = None,
         stats: CaptureStats | None = None,
     ) -> dict:
-        """Mark a session stopped and append the final CSV row."""
+        """Mark a session stopped and append the final CSV row.
+
+        Optional ``track`` / ``car`` / ``notes`` flush phone edits made after
+        start onto the stopped row (last-row-wins).
+        """
         self.ensure()
         with self._lock:
             row = self._open.pop(session_id, None)
@@ -157,6 +197,7 @@ class SessionStore:
                 if row.get("status") == "stopped" and row.get("ended_at"):
                     raise SessionConflict(f"Session {session_id} already ended")
                 row = dict(row)
+            self._apply_metadata(row, track=track, car=car, notes=notes)
             row["ended_at"] = _utc_now_iso()
             row["status"] = "stopped"
             if stats is not None:
@@ -165,11 +206,39 @@ class SessionStore:
         logger.info("Session stopped id=%s", session_id)
         return dict(row)
 
-    def end_current(self, *, stats: CaptureStats | None = None) -> dict:
+    def end_current(
+        self,
+        *,
+        track: str | None = None,
+        car: str | None = None,
+        notes: str | None = None,
+        stats: CaptureStats | None = None,
+    ) -> dict:
         current = self.current_session()
         if current is None:
             raise SessionNotFound("No running session")
-        return self.end_session(current["session_id"], stats=stats)
+        return self.end_session(
+            current["session_id"],
+            track=track,
+            car=car,
+            notes=notes,
+            stats=stats,
+        )
+
+    @staticmethod
+    def _apply_metadata(
+        row: dict,
+        *,
+        track: str | None,
+        car: str | None,
+        notes: str | None,
+    ) -> None:
+        if track is not None:
+            row["track"] = track.strip()
+        if car is not None:
+            row["car"] = car.strip()
+        if notes is not None:
+            row["notes"] = notes.strip()
 
     @staticmethod
     def _apply_capture_snapshot(

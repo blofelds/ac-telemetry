@@ -28,6 +28,14 @@ class SessionCreate(BaseModel):
     notes: str = Field(default="", max_length=2000)
 
 
+class SessionUpdate(BaseModel):
+    """Partial mid-session / end-flush metadata (omit a field to leave it)."""
+
+    track: str | None = Field(default=None, max_length=120)
+    car: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class GlyphSaveRequest(BaseModel):
     """Save the current lap_time ROI (or a sub-rect) as a template PNG."""
 
@@ -511,11 +519,33 @@ def create_app(
         except Exception:  # noqa: BLE001
             pass
 
+    @app.patch("/api/sessions/{session_id}")
+    def api_session_update(session_id: str, body: SessionUpdate) -> dict[str, Any]:
+        """Persist track/car/notes edits while a session is still running."""
+        try:
+            row = store.update_session(
+                session_id,
+                track=body.track,
+                car=body.car,
+                notes=body.notes,
+            )
+        except SessionNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"session": row}
+
     # Static path before {session_id} so "current" is not treated as an id.
     @app.post("/api/sessions/current/end")
-    def api_session_end_current() -> dict[str, Any]:
+    def api_session_end_current(
+        body: SessionUpdate | None = None,
+    ) -> dict[str, Any]:
+        meta = body or SessionUpdate()
         try:
-            row = store.end_current(stats=capture.stats)
+            row = store.end_current(
+                track=meta.track,
+                car=meta.car,
+                notes=meta.notes,
+                stats=capture.stats,
+            )
         except SessionNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         _accuracy_on_session_end(row.get("session_id"))
@@ -524,9 +554,19 @@ def create_app(
         return {"session": row}
 
     @app.post("/api/sessions/{session_id}/end")
-    def api_session_end(session_id: str) -> dict[str, Any]:
+    def api_session_end(
+        session_id: str,
+        body: SessionUpdate | None = None,
+    ) -> dict[str, Any]:
+        meta = body or SessionUpdate()
         try:
-            row = store.end_session(session_id, stats=capture.stats)
+            row = store.end_session(
+                session_id,
+                track=meta.track,
+                car=meta.car,
+                notes=meta.notes,
+                stats=capture.stats,
+            )
         except SessionNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SessionConflict as exc:
