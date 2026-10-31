@@ -141,6 +141,12 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     .marks button[aria-pressed="true"].m-skip {
       background: #1c2836; color: var(--skip); border-color: var(--skip);
     }
+    .btn-insert-skip {
+      margin-top: 0.45rem; min-height: 1.9rem; padding: 0.25rem 0.55rem;
+      font-size: 0.78rem; font-weight: 600;
+      background: transparent; color: var(--skip);
+      border: 1px solid var(--skip); border-radius: 4px;
+    }
     .footer-actions { margin-top: 1rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
     a.home { color: var(--accent); font-size: 0.85rem; }
   </style>
@@ -263,16 +269,34 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       if (currentSid) sel.value = currentSid;
     }
 
+    function hasCsvLap(lap) {
+      return lap && lap.csv_lap_number != null && lap.csv_lap_number !== "";
+    }
+
+    function makeSkipLap() {
+      // GT-only intentional miss: no csv_lap_number; time filled before Confirm.
+      return {
+        lap_time: "",
+        mark: "skip",
+        csv_lap_number: null,
+        crops: [],
+        note: "skip — on-screen, no CSV",
+      };
+    }
+
     function setMark(idx, mark) {
       if (!pageLaps[idx]) return;
+      // Skip means "on-screen, no CSV" — never flip a CSV-backed row to skip.
+      if (mark === "skip" && hasCsvLap(pageLaps[idx])) return;
       pageLaps[idx].mark = mark;
       renderLaps(pageLaps);
     }
 
     function renderLaps(laps) {
-      pageLaps = (laps || []).map((lap) => ({
+      pageLaps = (laps || []).map((lap, i) => ({
         ...lap,
         mark: markOf(lap),
+        gt_index: i + 1,
       }));
       const root = $("laps");
       root.innerHTML = "";
@@ -305,7 +329,7 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
         const timeCol = document.createElement("div");
         timeCol.className = "time-col";
         const lab = document.createElement("label");
-        lab.textContent = "Lap " + (lap.gt_index || idx + 1);
+        lab.textContent = "Lap " + (idx + 1);
         lab.setAttribute("for", "t" + idx);
         const inp = document.createElement("input");
         inp.type = "text";
@@ -326,18 +350,30 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
           btn.className = "m-" + m;
           btn.textContent = m;
           btn.setAttribute("aria-pressed", mark === m ? "true" : "false");
-          btn.title = m === "double"
-            ? "False extra CSV write — excluded from write%"
-            : m === "skip"
-              ? "On-screen lap with no CSV — counts as miss"
-              : "True GT lap (default)";
-          btn.addEventListener("click", () => setMark(idx, m));
+          const csvBacked = hasCsvLap(lap);
+          if (m === "skip" && csvBacked) {
+            btn.disabled = true;
+            btn.title = "CSV-backed row — use Insert skip after for a GT-only miss";
+          } else {
+            btn.title = m === "double"
+              ? "False extra CSV write — excluded from write%"
+              : m === "skip"
+                ? "On-screen lap with no CSV — counts as miss"
+                : "True GT lap (default)";
+            btn.addEventListener("click", () => setMark(idx, m));
+          }
           marks.appendChild(btn);
         }
+        const insertBtn = document.createElement("button");
+        insertBtn.type = "button";
+        insertBtn.className = "btn-insert-skip";
+        insertBtn.textContent = "Insert skip after";
+        insertBtn.title = "Insert a GT-only skip row immediately after this lap";
+        insertBtn.addEventListener("click", () => insertSkipAfter(idx));
         const meta = document.createElement("div");
         meta.className = "meta";
         const parts = [];
-        if (lap.csv_lap_number != null && lap.csv_lap_number !== "") {
+        if (hasCsvLap(lap)) {
           parts.push("CSV #" + lap.csv_lap_number);
         } else if (mark === "skip") {
           parts.push("no CSV");
@@ -347,6 +383,7 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
         timeCol.appendChild(lab);
         timeCol.appendChild(inp);
         timeCol.appendChild(marks);
+        timeCol.appendChild(insertBtn);
         timeCol.appendChild(meta);
         row.appendChild(crops);
         row.appendChild(timeCol);
@@ -356,16 +393,16 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       $("add-skip").disabled = !currentSid;
     }
 
+    function insertSkipAfter(idx) {
+      if (idx < 0 || idx >= pageLaps.length) return;
+      pageLaps.splice(idx + 1, 0, makeSkipLap());
+      renderLaps(pageLaps);
+      const inp = $("t" + (idx + 1));
+      if (inp) inp.focus();
+    }
+
     function addSkipLap() {
-      const n = pageLaps.length + 1;
-      pageLaps.push({
-        gt_index: n,
-        lap_time: "",
-        mark: "skip",
-        csv_lap_number: null,
-        crops: [],
-        note: "skip — on-screen, no CSV",
-      });
+      pageLaps.push(makeSkipLap());
       renderLaps(pageLaps);
       const inp = $("t" + (pageLaps.length - 1));
       if (inp) inp.focus();
