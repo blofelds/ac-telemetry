@@ -268,7 +268,10 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
     page = client.get("/accuracy")
     assert page.status_code == 200
     assert "GT eyeball" in page.text
-    assert "max-height: 112px" in page.text
+    # Forced height (not max-height): native tee JPEGs are ~17px tall and
+    # would otherwise stay at intrinsic size under a max-height cap.
+    assert "height: 112px; width: auto" in page.text
+    assert "max-height: 112px" not in page.text
     assert "GT confirmed" in page.text
     assert "GT not confirmed" in page.text
 
