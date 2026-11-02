@@ -110,12 +110,11 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     }
     .crops {
       display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center;
-      min-height: 112px;
+      min-height: 2.5rem;
     }
     .crops img {
-      /* Tee JPEGs are tiny (~17px tall); max-height never upscales them.
-         Force height to the 2× helper display target (56px → 112px). */
-      height: 112px; width: auto; image-rendering: pixelated;
+      /* Tee JPEGs are ~84×17; true 2× display is 34px tall (not the unused 112px cap). */
+      height: 34px; width: auto; image-rendering: pixelated;
       border: 1px solid var(--line); background: #000; border-radius: 4px;
     }
     .crops .empty { color: var(--muted); font-size: 0.85rem; }
