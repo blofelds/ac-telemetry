@@ -60,10 +60,6 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     button:disabled { opacity: 0.45; cursor: not-allowed; }
     .btn-load { background: var(--accent); color: #fff; }
     .btn-confirm { background: var(--ok); color: #062016; }
-    .btn-add {
-      background: transparent; color: var(--skip);
-      border: 1px solid var(--skip);
-    }
     .msg { margin: 0.5rem 0 1rem; font-size: 0.9rem; color: var(--muted); min-height: 1.2em; }
     .msg.err { color: var(--bad); }
     .msg.ok { color: var(--ok); }
@@ -192,7 +188,6 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
   <div class="laps" id="laps"></div>
   <div class="footer-actions">
     <button type="button" class="btn-confirm" id="confirm" disabled>Confirm</button>
-    <button type="button" class="btn-add" id="add-skip" disabled>Add skip lap</button>
   </div>
 
   <script>
@@ -336,9 +331,8 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       const root = $("laps");
       root.innerHTML = "";
       if (!pageLaps.length) {
-        root.innerHTML = "<p class='sub'>No CSV laps to prefill — use Add skip lap for GT-only rows.</p>";
+        root.innerHTML = "<p class='sub'>No CSV laps to prefill.</p>";
         $("confirm").disabled = false;
-        $("add-skip").disabled = !currentSid;
         return;
       }
       pageLaps.forEach((lap, idx) => {
@@ -425,7 +419,6 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
         root.appendChild(row);
       });
       $("confirm").disabled = false;
-      $("add-skip").disabled = !currentSid;
     }
 
     function insertSkipAfter(idx) {
@@ -433,13 +426,6 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       pageLaps.splice(idx + 1, 0, makeSkipLap());
       renderLaps(pageLaps);
       const inp = $("t" + (idx + 1));
-      if (inp) inp.focus();
-    }
-
-    function addSkipLap() {
-      pageLaps.push(makeSkipLap());
-      renderLaps(pageLaps);
-      const inp = $("t" + (pageLaps.length - 1));
       if (inp) inp.focus();
     }
 
@@ -459,7 +445,6 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
         hideGtBanner();
         hideSessionNotes();
         $("confirm").disabled = true;
-        $("add-skip").disabled = true;
         return;
       }
       const data = await res.json();
@@ -550,10 +535,8 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
 
     $("load").addEventListener("click", () => loadHelper().catch((e) => setMsg(String(e), "err")));
     $("confirm").addEventListener("click", () => confirmGt().catch((e) => setMsg(String(e), "err")));
-    $("add-skip").addEventListener("click", () => addSkipLap());
     $("session").addEventListener("change", () => {
       currentSid = $("session").value;
-      $("add-skip").disabled = !currentSid;
       hideSessionNotes();
       const st = confirmedBySid[currentSid];
       if (!currentSid) {
