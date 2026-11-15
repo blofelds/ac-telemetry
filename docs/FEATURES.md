@@ -50,7 +50,7 @@ Honest inventory of what ships now versus what is planned.
 
 ### Ops sketch
 
-- `deploy/ac-telemetry.service` — systemd unit outline for headless Pi.
+- `deploy/ac-telemetry.service` + `deploy/install-systemd.sh` — system unit as non-root `User=pi` (`systemctl enable --now`); see [`../deploy/README.md`](../deploy/README.md).
 
 ### Card-native debug recording (bounded)
 

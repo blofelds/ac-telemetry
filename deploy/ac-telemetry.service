@@ -6,8 +6,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Runtime user is non-root. Install/enable of this unit still needs sudo once.
 User=pi
 Group=pi
+# Recommended Pi layout: clone + venv under /opt/ac-telemetry (owned by pi).
+# If the tree lives elsewhere (e.g. /home/pi/git/ac-telemetry), edit
+# WorkingDirectory, ExecStart, ReadWritePaths, and ProtectHome before enable.
 WorkingDirectory=/opt/ac-telemetry
 Environment=AC_TELEMETRY_BACKEND=v4l2
 Environment=AC_TELEMETRY_PROFILE=pi2b
@@ -23,6 +27,24 @@ SupplementaryGroups=video
 
 # Keep memory modest on Pi 2B (1 GB). Soft limit; tune after measuring.
 MemoryMax=256M
+
+# Hardening (compatible with Python + V4L2 under /opt).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+# CSV sessions, recordings, accuracy artefacts under the install tree.
+ReadWritePaths=/opt/ac-telemetry
+# V4L capture nodes (major 81); still needs SupplementaryGroups=video.
+DevicePolicy=closed
+DeviceAllow=char-video rw
 
 [Install]
 WantedBy=multi-user.target

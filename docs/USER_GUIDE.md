@@ -21,15 +21,21 @@ pip install -e .
 
 ## Install (Raspberry Pi 2B + real capture)
 
+**Production layout** (matches [`deploy/ac-telemetry.service`](../deploy/ac-telemetry.service)): `/opt/ac-telemetry` owned by `pi`.
+
 ```bash
 sudo apt update
 sudo apt install -y python3-opencv python3-venv v4l-utils
 # Optional later: tesseract-ocr
 
-cd ~/git/ac-telemetry   # or your clone path
+sudo mkdir -p /opt/ac-telemetry
+sudo chown pi:pi /opt/ac-telemetry
+# clone into /opt/ac-telemetry if empty, or:
+cd /opt/ac-telemetry   # or ~/git/ac-telemetry for manual runs only
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 pip install -e .
+sudo usermod -aG video pi   # re-login if newly added
 ```
 
 **Do not** `pip install -e ".[capture]"` on the 2B — OpenCV/numpy wheels frequently die with **SIGILL**. Use distro OpenCV via `--system-site-packages` instead.
@@ -64,9 +70,23 @@ ac-telemetry
 3. Keep `reader: mock` until capture is stable; then try `tesseract`. If OCR fails on AC’s block font, switch to `template` — but **bundled `ac_*` PNGs may be ACC (wrong game)**. Prefer live Pi set `templates/lap_time_digits/ac_720p_pi` (complete 0–9 + `:` / `.`; digit span + separator recovery ship); VLC `ac_720p_capture` can mis-rank lookalikes on soft MJPEG (see [`ROI.md`](ROI.md)).
 4. Start a session from the phone UI before you drive.
 
-### systemd
+### systemd (boot + survive logout)
 
-See [`../deploy/ac-telemetry.service`](../deploy/ac-telemetry.service). Pi user needs the `video` group.
+System unit runs as **non-root** `User=pi` (not root). Full steps: [`../deploy/README.md`](../deploy/README.md).
+
+```bash
+# After /opt/ac-telemetry + .venv exist and pi is in group video:
+sudo ./deploy/install-systemd.sh
+# or:
+#   sudo install -m 644 deploy/ac-telemetry.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ac-telemetry.service
+
+sudo systemctl status ac-telemetry
+sudo journalctl -u ac-telemetry -f
+```
+
+If the clone is not under `/opt/ac-telemetry`, edit `WorkingDirectory`, `ExecStart`, `ReadWritePaths`, and `ProtectHome` in the unit before enable (see deploy README).
 
 ## Lap times
 
