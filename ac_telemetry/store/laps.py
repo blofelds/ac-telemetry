@@ -100,6 +100,100 @@ class LapStore:
         return rows[:limit]
 
     @staticmethod
+    def _lap_ms(row: dict[str, Any]) -> int | None:
+        raw = row.get("lap_time_ms")
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            ms = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return ms if ms > 0 else None
+
+    @staticmethod
+    def format_delta_ms(delta_ms: int) -> str:
+        """ACC-style gap: ``BEST``, ``+0.320``, or ``+1:02.100`` if ≥60s."""
+        if delta_ms == 0:
+            return "BEST"
+        sign = "+" if delta_ms > 0 else "-"
+        abs_ms = abs(int(delta_ms))
+        if abs_ms >= 60_000:
+            return sign + format_lap_time_ms(abs_ms)
+        seconds = abs_ms / 1000.0
+        return f"{sign}{seconds:.3f}"
+
+    def summarize_session(
+        self,
+        session_id: str,
+        *,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        """Aggregate lap stats + per-lap Δ to best for a session dossier.
+
+        Laps are newest-first (same as ``list_laps``). Invalid / missing
+        ``lap_time_ms`` rows stay in the list with null deltas and are
+        excluded from best/avg/spread.
+        """
+        laps = self.list_laps(session_id=session_id, limit=limit)
+        timed: list[tuple[dict[str, Any], int]] = []
+        for row in laps:
+            ms = self._lap_ms(row)
+            if ms is not None:
+                timed.append((row, ms))
+
+        best_ms: int | None = None
+        best_lap_number: str | None = None
+        best_lap_time: str | None = None
+        avg_ms: int | None = None
+        avg_lap_time: str | None = None
+        spread_ms: int | None = None
+
+        if timed:
+            best_ms = min(ms for _, ms in timed)
+            # Prefer the chronologically earliest best when times tie.
+            best_row = None
+            for row, ms in reversed(timed):
+                if ms == best_ms:
+                    best_row = row
+                    break
+            if best_row is not None:
+                best_lap_number = str(best_row.get("lap_number") or "") or None
+                best_lap_time = str(best_row.get("lap_time") or "") or format_lap_time_ms(
+                    best_ms
+                )
+            avg_ms = sum(ms for _, ms in timed) // len(timed)
+            avg_lap_time = format_lap_time_ms(avg_ms)
+            spread_ms = max(ms for _, ms in timed) - best_ms
+
+        enriched: list[dict[str, Any]] = []
+        for row in laps:
+            out = dict(row)
+            ms = self._lap_ms(row)
+            if ms is None or best_ms is None:
+                out["delta_ms"] = None
+                out["delta_text"] = None
+                out["is_best"] = False
+            else:
+                delta = ms - best_ms
+                out["delta_ms"] = delta
+                out["delta_text"] = self.format_delta_ms(delta)
+                out["is_best"] = delta == 0
+            enriched.append(out)
+
+        return {
+            "session_id": session_id,
+            "lap_count": len(laps),
+            "timed_lap_count": len(timed),
+            "best_ms": best_ms,
+            "best_lap_time": best_lap_time,
+            "best_lap_number": best_lap_number,
+            "avg_ms": avg_ms,
+            "avg_lap_time": avg_lap_time,
+            "spread_ms": spread_ms,
+            "laps": enriched,
+        }
+
+    @staticmethod
     def _normalize_time_fields(
         lap_time: Any, lap_time_ms: Any
     ) -> tuple[str, str] | None:

@@ -124,7 +124,19 @@ _STATUS_HTML = """<!DOCTYPE html>
       margin-bottom: 0.5rem;
       font-size: 0.9rem;
     }
+    .history li.tap {
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .history li.tap:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .history li.tap:active { border-color: var(--accent); }
     .history .meta { color: var(--muted); font-size: 0.78rem; margin-top: 0.25rem; }
+    .history .chev {
+      float: right; color: var(--muted); font-size: 0.85rem; margin-top: 0.1rem;
+    }
     .badge {
       display: inline-block;
       font-size: 0.7rem;
@@ -173,9 +185,80 @@ _STATUS_HTML = """<!DOCTYPE html>
     }
     a { color: var(--accent); }
     footer { margin-top: 1.75rem; color: var(--muted); font-size: 0.78rem; max-width: 420px; }
+    #dossier-view { display: none; max-width: 420px; }
+    body.dossier #home-view { display: none; }
+    body.dossier #dossier-view { display: block; }
+    .btn-back {
+      background: transparent; color: var(--accent); border: 0;
+      padding: 0.35rem 0; min-height: auto; flex: none;
+      font-weight: 600; font-size: 0.95rem; cursor: pointer;
+    }
+    .dossier-title {
+      font-size: 1.15rem; font-weight: 600; margin: 0.5rem 0 0.35rem;
+    }
+    .dossier-meta {
+      color: var(--muted); font-size: 0.88rem; margin: 0 0 0.85rem;
+      white-space: pre-wrap;
+    }
+    .dossier-notes {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 6px; padding: 0.7rem 0.85rem; margin: 0 0 0.85rem;
+      font-size: 0.9rem;
+    }
+    .dossier-notes.empty { color: var(--muted); }
+    .view-toggle {
+      display: inline-flex; gap: 0; margin: 0.25rem 0 0.75rem;
+      border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+    }
+    .view-toggle button {
+      flex: none; min-height: 2.25rem; border-radius: 0;
+      background: var(--panel); color: var(--muted);
+      padding: 0.4rem 0.9rem; font-size: 0.85rem;
+    }
+    .view-toggle button.active {
+      background: #243040; color: var(--text);
+    }
+    .lap-list {
+      list-style: none; margin: 0; padding: 0;
+    }
+    .lap-list li {
+      display: grid;
+      grid-template-columns: 2.5rem 1fr auto;
+      gap: 0.5rem;
+      align-items: baseline;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.55rem 0.75rem;
+      margin-bottom: 0.4rem;
+      font-variant-numeric: tabular-nums;
+      font-size: 0.95rem;
+    }
+    .lap-list li.best { border-color: #3a5a3a; }
+    .lap-list .n { color: var(--muted); }
+    .lap-list .t { color: var(--text); }
+    .lap-list .d { color: var(--muted); font-size: 0.88rem; }
+    .lap-list li.best .d { color: var(--ok); font-weight: 600; }
+    .lap-board {
+      width: 100%; border-collapse: collapse;
+      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-size: 0.88rem; font-variant-numeric: tabular-nums;
+    }
+    .lap-board th, .lap-board td {
+      text-align: left; padding: 0.4rem 0.45rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .lap-board th { color: var(--muted); font-weight: 600; font-size: 0.72rem;
+      text-transform: uppercase; letter-spacing: 0.04em; }
+    .lap-board tr.best td { color: var(--ok); }
+    .lap-board .gap { text-align: right; color: var(--muted); }
+    .lap-board tr.best .gap { color: var(--ok); font-weight: 600; }
+    .dossier-empty { color: var(--muted); font-size: 0.9rem; margin: 0.5rem 0; }
+    .is-hidden { display: none !important; }
   </style>
 </head>
 <body>
+  <div id="home-view">
   <div class="grid">
     <div class="stat"><div class="label">Last recorded</div><div class="value" id="lap-recorded">…</div></div>
     <div class="stat"><div class="label">Displayed</div><div class="value" id="lap-display" style="color:var(--lap)">…</div></div>
@@ -223,12 +306,39 @@ _STATUS_HTML = """<!DOCTYPE html>
     <a href="/api/sessions">/api/sessions</a> · <a href="/api/laps">/api/laps</a> ·
     <a href="/debug">ROI debug</a>
   </footer>
+  </div>
+
+  <div id="dossier-view" aria-live="polite">
+    <button type="button" class="btn-back" id="dossier-back">← History</button>
+    <div class="dossier-title" id="dossier-title">Session</div>
+    <p class="dossier-meta" id="dossier-meta"></p>
+    <div class="dossier-notes empty" id="dossier-notes">No notes.</div>
+    <div class="grid" style="margin-bottom:0.75rem">
+      <div class="stat"><div class="label">Laps</div><div class="value" id="dossier-laps-n">—</div></div>
+      <div class="stat"><div class="label">Best</div><div class="value" id="dossier-best" style="color:var(--lap)">—</div></div>
+      <div class="stat"><div class="label">Avg</div><div class="value" id="dossier-avg">—</div></div>
+      <div class="stat"><div class="label">Spread</div><div class="value" id="dossier-spread">—</div></div>
+    </div>
+    <div class="view-toggle" role="group" aria-label="Lap view">
+      <button type="button" id="view-list" class="active" data-view="list">List</button>
+      <button type="button" id="view-board" data-view="board">Board</button>
+    </div>
+    <p class="dossier-empty is-hidden" id="dossier-empty">No laps recorded.</p>
+    <ul class="lap-list" id="dossier-lap-list"></ul>
+    <table class="lap-board is-hidden" id="dossier-lap-board">
+      <thead><tr><th>#</th><th>Time</th><th class="gap">Gap</th></tr></thead>
+      <tbody id="dossier-lap-board-body"></tbody>
+    </table>
+  </div>
 
   <script>
     /*__SESSION_TITLE_JS__*/
     /*__STINT_SCROLL_JS__*/
     const $ = (id) => document.getElementById(id);
     let currentId = null;
+    let dossierId = null;
+    let dossierView = "list";
+    let dossierPoll = null;
     let stintSessionId = null;
 
     function setMsg(text, isErr) {
@@ -340,7 +450,10 @@ _STATUS_HTML = """<!DOCTYPE html>
         const notes = s.notes
           ? "<div class=\\"meta\\">" + escapeHtml(s.notes) + "</div>"
           : "";
-        return "<li><div>" + escapeHtml(title) + badge + "</div>" +
+        const sid = escapeHtml(s.session_id || "");
+        return "<li class=\\"tap\\" role=\\"button\\" tabindex=\\"0\\" data-session-id=\\"" +
+          sid + "\\"><span class=\\"chev\\" aria-hidden=\\"true\\">›</span><div>" +
+          escapeHtml(title) + badge + "</div>" +
           "<div class=\\"meta\\">" + escapeHtml(meta) + "</div>" + notes + "</li>";
       }).join("");
     }
@@ -351,6 +464,150 @@ _STATUS_HTML = """<!DOCTYPE html>
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+    }
+
+    function formatSpread(ms) {
+      if (ms == null) return "—";
+      const n = Number(ms);
+      if (!Number.isFinite(n)) return "—";
+      if (n >= 60000) {
+        const m = Math.floor(n / 60000);
+        const rem = n % 60000;
+        const sec = Math.floor(rem / 1000);
+        const milli = rem % 1000;
+        return m + ":" + String(sec).padStart(2, "0") + "." +
+          String(milli).padStart(3, "0");
+      }
+      return (n / 1000).toFixed(3) + "s";
+    }
+
+    function setDossierViewMode(mode) {
+      dossierView = mode === "board" ? "board" : "list";
+      $("view-list").classList.toggle("active", dossierView === "list");
+      $("view-board").classList.toggle("active", dossierView === "board");
+      const hasLaps = $("dossier-lap-list").children.length > 0;
+      $("dossier-empty").classList.toggle("is-hidden", hasLaps);
+      $("dossier-lap-list").classList.toggle(
+        "is-hidden", !hasLaps || dossierView !== "list"
+      );
+      $("dossier-lap-board").classList.toggle(
+        "is-hidden", !hasLaps || dossierView !== "board"
+      );
+    }
+
+    function renderDossierLaps(laps) {
+      const list = $("dossier-lap-list");
+      const body = $("dossier-lap-board-body");
+      list.innerHTML = "";
+      body.innerHTML = "";
+      if (!laps || !laps.length) {
+        setDossierViewMode(dossierView);
+        return;
+      }
+      list.innerHTML = laps.map((lap) => {
+        const n = lap.lap_number != null ? String(lap.lap_number) : "—";
+        const t = lap.lap_time || "—";
+        const d = lap.delta_text || "—";
+        const cls = lap.is_best ? " class=\\"best\\"" : "";
+        return "<li" + cls + "><span class=\\"n\\">#" +
+          escapeHtml(n) + "</span><span class=\\"t\\">" + escapeHtml(t) +
+          "</span><span class=\\"d\\">" + escapeHtml(d) + "</span></li>";
+      }).join("");
+      body.innerHTML = laps.map((lap) => {
+        const n = lap.lap_number != null ? String(lap.lap_number) : "—";
+        const t = lap.lap_time || "—";
+        const d = lap.delta_text || "—";
+        const best = lap.is_best ? " class=\\"best\\"" : "";
+        return "<tr" + best + "><td>" + escapeHtml(n) + "</td><td>" +
+          escapeHtml(t) + "</td><td class=\\"gap\\">" + escapeHtml(d) +
+          "</td></tr>";
+      }).join("");
+      setDossierViewMode(dossierView);
+    }
+
+    function renderDossier(payload) {
+      const session = (payload && payload.session) || {};
+      const summary = (payload && payload.summary) || {};
+      $("dossier-title").textContent = formatSessionTitle(session);
+      const lines = [
+        (session.track || "(no track)") + " · " + (session.car || "(no car)"),
+        (session.status || "—") +
+          (session.started_at ? " · started " + session.started_at : "") +
+          (session.ended_at ? " → " + session.ended_at : ""),
+        "id " + (session.session_id || "—"),
+      ];
+      $("dossier-meta").textContent = lines.join("\\n");
+      const notes = (session.notes || "").trim();
+      const notesEl = $("dossier-notes");
+      if (notes) {
+        notesEl.textContent = notes;
+        notesEl.classList.remove("empty");
+      } else {
+        notesEl.textContent = "No notes.";
+        notesEl.classList.add("empty");
+      }
+      $("dossier-laps-n").textContent =
+        summary.lap_count != null ? String(summary.lap_count) : "—";
+      $("dossier-best").textContent = summary.best_lap_time || "—";
+      $("dossier-avg").textContent = summary.avg_lap_time || "—";
+      $("dossier-spread").textContent = formatSpread(summary.spread_ms);
+      renderDossierLaps(summary.laps || []);
+    }
+
+    async function loadDossier(sessionId) {
+      if (!sessionId) return;
+      dossierId = sessionId;
+      document.body.classList.add("dossier");
+      $("dossier-title").textContent = "Loading…";
+      try {
+        const r = await fetch(
+          "/api/sessions/" + encodeURIComponent(sessionId) + "/summary"
+        );
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          $("dossier-title").textContent = "Session not found";
+          $("dossier-meta").textContent = d.detail || ("HTTP " + r.status);
+          renderDossierLaps([]);
+          return;
+        }
+        renderDossier(d);
+      } catch (e) {
+        $("dossier-title").textContent = "Could not load session";
+        $("dossier-meta").textContent = String(e);
+        renderDossierLaps([]);
+      }
+    }
+
+    function openDossier(sessionId) {
+      if (!sessionId) return;
+      if (location.hash !== "#session/" + sessionId) {
+        location.hash = "session/" + sessionId;
+        return;
+      }
+      loadDossier(sessionId);
+      if (dossierPoll) clearInterval(dossierPoll);
+      // Refresh while a live session dossier is open (no main-page stint scroll).
+      dossierPoll = setInterval(() => {
+        if (dossierId) loadDossier(dossierId);
+      }, 5000);
+    }
+
+    function closeDossier() {
+      dossierId = null;
+      document.body.classList.remove("dossier");
+      if (dossierPoll) {
+        clearInterval(dossierPoll);
+        dossierPoll = null;
+      }
+      if (location.hash.indexOf("#session/") === 0) {
+        history.replaceState(null, "", location.pathname + location.search);
+      }
+    }
+
+    function syncHashRoute() {
+      const m = /^#session\\/([^/]+)$/.exec(location.hash || "");
+      if (m) openDossier(decodeURIComponent(m[1]));
+      else closeDossier();
     }
 
     function renderDetectHealth(det) {
@@ -408,6 +665,28 @@ _STATUS_HTML = """<!DOCTYPE html>
         $("history").innerHTML = "<li class=\\"meta\\">Could not load history.</li>";
       }
     }
+
+    $("history").addEventListener("click", (ev) => {
+      const li = ev.target.closest("li[data-session-id]");
+      if (!li) return;
+      openDossier(li.getAttribute("data-session-id"));
+    });
+    $("history").addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const li = ev.target.closest("li[data-session-id]");
+      if (!li) return;
+      ev.preventDefault();
+      openDossier(li.getAttribute("data-session-id"));
+    });
+    $("dossier-back").addEventListener("click", () => {
+      closeDossier();
+    });
+    document.querySelector(".view-toggle").addEventListener("click", (ev) => {
+      const btn = ev.target.closest("button[data-view]");
+      if (!btn) return;
+      setDossierViewMode(btn.getAttribute("data-view"));
+    });
+    window.addEventListener("hashchange", syncHashRoute);
 
     $("btn-start").addEventListener("click", async () => {
       setMsg("Starting…");
@@ -470,6 +749,7 @@ _STATUS_HTML = """<!DOCTYPE html>
 
     refreshStatus();
     refreshHistory();
+    syncHashRoute();
     refreshStint();
     setInterval(refreshStatus, 2000);
     setInterval(refreshHistory, 10000);
