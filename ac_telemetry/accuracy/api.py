@@ -146,12 +146,15 @@ def mount_accuracy_routes(
     @app.get("/api/accuracy/sessions/{session_id}/helper")
     def api_accuracy_helper(session_id: str) -> dict[str, Any]:
         """Page data: prefill laps + up to two tee crop URLs per hold."""
-        _sid_or_404(session_id)
+        row = store.get_session(session_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Session not found")
         return build_helper_page_data(
             data_dir=settings.data_dir,
             session_id=session_id,
             lap_store=lap_store,
             subdir=accuracy.settings.subdir,
+            session_notes=row.get("notes") or "",
         )
 
     @app.get("/api/accuracy/sessions/{session_id}/roi/{filename}")
