@@ -194,7 +194,12 @@ def test_helper_routes_404_when_disabled(tmp_path: Path) -> None:
 def test_helper_page_and_confirm(tmp_path: Path) -> None:
     client, store, lap_store, data_dir = _enabled_client(tmp_path)
     created = client.post(
-        "/api/sessions", json={"track": "Monza", "car": "Test", "notes": ""}
+        "/api/sessions",
+        json={
+            "track": "Monza",
+            "car": "Test",
+            "notes": "Soft tyre set, cool evening",
+        },
     )
     assert created.status_code == 201
     sid = created.json()["session"]["session_id"]
@@ -275,6 +280,9 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
     assert "max-height: 112px" not in page.text
     assert "GT confirmed" in page.text
     assert "GT not confirmed" in page.text
+    assert 'id="session-notes"' in page.text
+    assert "Session notes" in page.text
+    assert "function setSessionNotes" in page.text
 
     page_sid = client.get(f"/accuracy/{sid}")
     assert page_sid.status_code == 200
@@ -295,6 +303,7 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
     assert body["session_id"] == sid
     assert body["gt_confirmed"] is False
     assert body["gt_confirmed_via"] == []
+    assert body["session_notes"] == "Soft tyre set, cool evening"
     assert len(body["laps"]) == 2
     assert len(body["laps"][0]["crops"]) == 2
     assert body["laps"][0]["crops"][0]["seq"] == 1
@@ -431,6 +440,7 @@ def test_helper_confirm_persists_double_and_skip(tmp_path: Path) -> None:
     helper = client.get(f"/api/accuracy/sessions/{sid}/helper")
     assert helper.status_code == 200
     assert helper.json()["marks"] == ["normal", "double", "skip"]
+    assert helper.json()["session_notes"] == ""
 
     confirmed = client.post(
         f"/api/accuracy/sessions/{sid}/gt/confirm",
