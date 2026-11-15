@@ -88,6 +88,18 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     }
     .gt-banner .via { font-size: 0.78rem; color: var(--muted); }
     .gt-banner.confirmed .via { color: #8ec9a8; }
+    .session-notes {
+      display: none; max-width: 960px; margin: 0 0 0.85rem;
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 6px; padding: 0.7rem 0.85rem;
+      font-size: 0.9rem; white-space: pre-wrap;
+    }
+    .session-notes.visible { display: block; }
+    .session-notes.empty { color: var(--muted); }
+    .session-notes .notes-label {
+      display: block; font-size: 0.72rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.35rem;
+    }
     .legend {
       color: var(--muted); font-size: 0.8rem; margin: 0 0 0.75rem; max-width: 960px;
     }
@@ -167,6 +179,10 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     <span class="gt-badge" id="gt-badge"></span>
     <span class="via" id="gt-via"></span>
   </div>
+  <div class="session-notes" id="session-notes" aria-live="polite">
+    <span class="notes-label">Session notes</span>
+    <div id="session-notes-body"></div>
+  </div>
   <p class="legend">
     <strong>normal</strong> = true lap ·
     <strong>double</strong> = false extra CSV (excluded from write%) ·
@@ -204,6 +220,25 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       banner.className = "gt-banner";
       $("gt-badge").textContent = "";
       $("gt-via").textContent = "";
+    }
+
+    function hideSessionNotes() {
+      const el = $("session-notes");
+      el.className = "session-notes";
+      $("session-notes-body").textContent = "";
+    }
+
+    function setSessionNotes(text) {
+      const el = $("session-notes");
+      const body = $("session-notes-body");
+      const notes = (text || "").trim();
+      if (notes) {
+        el.className = "session-notes visible";
+        body.textContent = notes;
+      } else {
+        el.className = "session-notes visible empty";
+        body.textContent = "No notes.";
+      }
     }
 
     function setGtBanner(confirmed, via) {
@@ -422,6 +457,7 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
         const detail = await res.text();
         setMsg("Load failed: " + detail, "err");
         hideGtBanner();
+        hideSessionNotes();
         $("confirm").disabled = true;
         $("add-skip").disabled = true;
         return;
@@ -429,6 +465,7 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       const data = await res.json();
       renderLaps(data.laps || []);
       setGtBanner(!!data.gt_confirmed, data.gt_confirmed_via || []);
+      setSessionNotes(data.session_notes || "");
       confirmedBySid[sid] = {
         session_id: sid,
         gt_confirmed: !!data.gt_confirmed,
@@ -517,6 +554,7 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     $("session").addEventListener("change", () => {
       currentSid = $("session").value;
       $("add-skip").disabled = !currentSid;
+      hideSessionNotes();
       const st = confirmedBySid[currentSid];
       if (!currentSid) {
         setGtBanner(false, []);
