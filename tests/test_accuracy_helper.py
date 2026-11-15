@@ -430,7 +430,9 @@ def test_helper_confirm_persists_double_and_skip(tmp_path: Path) -> None:
     page = client.get("/accuracy")
     assert page.status_code == 200
     assert "mark double/skip" in page.text
-    assert "Add skip lap" in page.text
+    assert "Add skip lap" not in page.text
+    assert "id=\"add-skip\"" not in page.text
+    assert "function addSkipLap" not in page.text
     assert "Insert skip after" in page.text
     assert "function insertSkipAfter" in page.text
     assert "CSV-backed row — use Insert skip after" in page.text
@@ -565,9 +567,10 @@ def test_insert_skip_after_places_gt_only_row_between_csv_laps() -> None:
     assert after[1]["csv_lap_number"] is None
     assert after[1]["lap_time"] == ""
     assert after[2]["csv_lap_number"] == 2
-    # Append path still available for end-of-list misses.
-    appended = rows + [_mirror_make_skip_lap()]
+    # End-of-list miss: Insert skip after the last row (replaces append-only Add skip).
+    appended = _mirror_insert_skip_after(rows, len(rows) - 1)
     assert appended[-1]["mark"] == "skip"
+    assert appended[-1]["csv_lap_number"] is None
     assert len(appended) == 3
     assert appended[1]["csv_lap_number"] == 2
 
