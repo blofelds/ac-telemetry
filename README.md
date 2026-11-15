@@ -88,7 +88,11 @@ v4l2-ctl --list-devices
 ac-telemetry
 ```
 
-Default listen address is `0.0.0.0:8741`. Systemd sketch: [`deploy/ac-telemetry.service`](deploy/ac-telemetry.service).
+Default listen address is `0.0.0.0:8741`.
+
+**systemd (Pi, non-root `User=pi`):** install under `/opt/ac-telemetry`, then
+`sudo ./deploy/install-systemd.sh` (or `systemctl enable --now ac-telemetry`).
+Details: [`deploy/README.md`](deploy/README.md), unit: [`deploy/ac-telemetry.service`](deploy/ac-telemetry.service).
 
 Calibrate `rois.lap_time` on the Pi: open
 [`http://<pi-ip>:8741/debug`](http://127.0.0.1:8741/debug)
