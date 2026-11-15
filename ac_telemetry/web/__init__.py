@@ -1,6 +1,7 @@
 """Phone-friendly LAN UI: sessions, live lap time, capture status, ROI debug."""
 
 from ac_telemetry.web.session_title import SESSION_TITLE_JS
+from ac_telemetry.web.stint_scroll import STINT_SCROLL_JS
 
 _STATUS_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -136,6 +137,40 @@ _STATUS_HTML = """<!DOCTYPE html>
     }
     .badge.run { background: #1e3d2e; color: var(--ok); }
     .badge.stop { background: #2a3038; color: var(--muted); }
+    .stint {
+      list-style: none;
+      margin: 0.75rem 0 0;
+      padding: 0;
+      max-width: 420px;
+      max-height: 14.5rem;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+    }
+    .stint li {
+      display: flex;
+      gap: 0.55rem;
+      align-items: baseline;
+      padding: 0.45rem 0.75rem;
+      font-size: 0.92rem;
+      font-variant-numeric: tabular-nums;
+      border-bottom: 1px solid var(--line);
+    }
+    .stint li:last-child { border-bottom: 0; }
+    .stint .num { color: var(--muted); min-width: 1.6rem; }
+    .stint .time { flex: 1; }
+    .stint .delta { color: var(--muted); min-width: 3.4rem; text-align: right; }
+    .stint li.best .time,
+    .stint li.best .delta { color: var(--lap); font-weight: 600; }
+    .stint li.outlier { color: var(--muted); opacity: 0.65; }
+    .stint li.outlier .delta { color: var(--muted); }
+    .stint .empty {
+      color: var(--muted);
+      font-size: 0.85rem;
+      padding: 0.65rem 0.75rem;
+    }
     a { color: var(--accent); }
     footer { margin-top: 1.75rem; color: var(--muted); font-size: 0.78rem; max-width: 420px; }
   </style>
@@ -147,6 +182,11 @@ _STATUS_HTML = """<!DOCTYPE html>
     <div class="stat"><div class="label">Lap #</div><div class="value" id="lap-number">…</div></div>
     <div class="stat"><div class="label">Reader</div><div class="value" id="lap-reader">…</div></div>
   </div>
+
+  <h2>Stint</h2>
+  <ul class="stint" id="stint" aria-live="polite">
+    <li class="empty">No session running.</li>
+  </ul>
 
   <h2>Session</h2>
   <div class="panel" id="session-panel">
@@ -186,13 +226,67 @@ _STATUS_HTML = """<!DOCTYPE html>
 
   <script>
     /*__SESSION_TITLE_JS__*/
+    /*__STINT_SCROLL_JS__*/
     const $ = (id) => document.getElementById(id);
     let currentId = null;
+    let stintSessionId = null;
 
     function setMsg(text, isErr) {
       const el = $("msg");
       el.textContent = text || "";
       el.className = "msg" + (isErr ? " err" : "");
+    }
+
+    function renderStint(laps, sessionId) {
+      const ul = $("stint");
+      if (!sessionId) {
+        ul.innerHTML = "<li class=\\"empty\\">No session running.</li>";
+        return;
+      }
+      if (!laps || !laps.length) {
+        ul.innerHTML = "<li class=\\"empty\\">No laps yet.</li>";
+        return;
+      }
+      const bestMs = sessionBestMs(laps);
+      ul.innerHTML = laps.map((row) => {
+        const ms = parseLapMs(row);
+        const num = row.lap_number != null && row.lap_number !== ""
+          ? "#" + row.lap_number
+          : "#—";
+        const time = (row.lap_time && String(row.lap_time).trim()) || "—";
+        let delta = "—";
+        if (ms != null && bestMs != null) {
+          delta = formatDeltaMs(ms - bestMs);
+        }
+        const cls = stintRowClass(ms, bestMs);
+        return "<li class=\\"" + cls + "\\">" +
+          "<span class=\\"num\\">" + escapeHtml(num) + "</span>" +
+          "<span class=\\"time\\">" + escapeHtml(time) + "</span>" +
+          "<span class=\\"delta\\">" + escapeHtml(delta) + "</span>" +
+          "</li>";
+      }).join("");
+    }
+
+    async function refreshStint() {
+      if (!currentId) {
+        stintSessionId = null;
+        renderStint([], null);
+        return;
+      }
+      try {
+        const r = await fetch(
+          "/api/laps?session_id=" + encodeURIComponent(currentId) + "&limit=100"
+        );
+        const d = await r.json();
+        stintSessionId = currentId;
+        // API returns newest-first — keep that order for thumb-scroll.
+        renderStint(d.laps || [], currentId);
+      } catch (e) {
+        if (stintSessionId !== currentId) {
+          $("stint").innerHTML =
+            "<li class=\\"empty\\">Could not load laps.</li>";
+        }
+      }
     }
 
     function renderCurrent(session) {
@@ -201,8 +295,10 @@ _STATUS_HTML = """<!DOCTYPE html>
         $("current").textContent = "No session running.";
         $("btn-start").disabled = false;
         $("btn-end").disabled = true;
+        renderStint([], null);
         return;
       }
+      const prevId = currentId;
       currentId = session.session_id;
       $("current").innerHTML =
         "<strong>Running</strong> · " +
@@ -215,6 +311,7 @@ _STATUS_HTML = """<!DOCTYPE html>
       if (!$("track").value) $("track").value = session.track || "";
       if (!$("car").value) $("car").value = session.car || "";
       if (!$("notes").value) $("notes").value = session.notes || "";
+      if (prevId !== currentId) refreshStint();
     }
 
     function prefillFromLastSession(sessions) {
@@ -291,6 +388,8 @@ _STATUS_HTML = """<!DOCTYPE html>
           (lap.lap_number != null ? lap.lap_number : "—");
         $("lap-reader").textContent =
           (lap.enabled === false ? "off" : (lap.reader || "—"));
+        // Stint list: poll with status so new laps appear without a second timer.
+        refreshStint();
       } catch (e) {
         $("running").textContent = "unreachable";
         $("detect-health").textContent = "unreachable";
@@ -329,6 +428,7 @@ _STATUS_HTML = """<!DOCTYPE html>
         }
         setMsg("Session started.");
         renderCurrent(d.session);
+        refreshStint();
         refreshHistory();
       } catch (e) {
         setMsg(String(e), true);
@@ -361,6 +461,7 @@ _STATUS_HTML = """<!DOCTYPE html>
         $("car").value = ended.car || "";
         $("notes").value = "";
         renderCurrent(null);
+        refreshStint();
         refreshHistory();
       } catch (e) {
         setMsg(String(e), true);
@@ -369,6 +470,7 @@ _STATUS_HTML = """<!DOCTYPE html>
 
     refreshStatus();
     refreshHistory();
+    refreshStint();
     setInterval(refreshStatus, 2000);
     setInterval(refreshHistory, 10000);
   </script>
@@ -376,7 +478,11 @@ _STATUS_HTML = """<!DOCTYPE html>
 </html>
 """
 
-STATUS_HTML = _STATUS_HTML.replace("/*__SESSION_TITLE_JS__*/", SESSION_TITLE_JS)
+STATUS_HTML = (
+    _STATUS_HTML.replace("/*__SESSION_TITLE_JS__*/", SESSION_TITLE_JS).replace(
+        "/*__STINT_SCROLL_JS__*/", STINT_SCROLL_JS
+    )
+)
 
 DEBUG_HTML = """<!DOCTYPE html>
 <html lang="en">
