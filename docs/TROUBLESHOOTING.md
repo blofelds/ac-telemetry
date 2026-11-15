@@ -25,6 +25,14 @@
 - Check Python version: `python3 --version` (need 3.11+).
 - Port in use: change `--port` / `AC_TELEMETRY_PORT` (default `8741`).
 
+### systemd unit fails / stays inactive
+
+- Paths must match the unit: default `WorkingDirectory` / `ExecStart` are `/opt/ac-telemetry` and `/opt/ac-telemetry/.venv/bin/ac-telemetry`. Edit those (and `ReadWritePaths`) if the tree lives elsewhere — see [`../deploy/README.md`](../deploy/README.md).
+- `ProtectHome=true` blocks a home-directory install until you change `ProtectHome` or move the tree to `/opt`.
+- `pi` must be in group `video` (`groups`; `SupplementaryGroups=video` in the unit).
+- Logs: `sudo journalctl -u ac-telemetry -e --no-pager`.
+- Re-enable after unit edits: `sudo systemctl daemon-reload && sudo systemctl restart ac-telemetry`.
+
 ## Status UI shows stopped / no frames
 
 - If you passed `--no-capture`, start without that flag.
