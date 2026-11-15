@@ -1,5 +1,6 @@
 """Phone-friendly LAN UI: sessions, live lap time, capture status, ROI debug."""
 
+from ac_telemetry.runtime_info import short_git_sha
 from ac_telemetry.web.session_title import SESSION_TITLE_JS
 from ac_telemetry.web.stint_scroll import STINT_SCROLL_JS
 
@@ -204,6 +205,12 @@ _STATUS_HTML = """<!DOCTYPE html>
     }
     a { color: var(--accent); }
     footer { margin-top: 1.75rem; color: var(--muted); font-size: 0.78rem; max-width: 420px; }
+    footer .build {
+      margin-top: 0.45rem;
+      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.02em;
+    }
     #dossier-view { display: none; max-width: 420px; }
     body.dossier #home-view { display: none; }
     body.dossier #dossier-view { display: block; }
@@ -324,6 +331,7 @@ _STATUS_HTML = """<!DOCTYPE html>
     <a href="/health">/health</a> · <a href="/metrics">/metrics</a> ·
     <a href="/api/sessions">/api/sessions</a> · <a href="/api/laps">/api/laps</a> ·
     <a href="/debug">ROI debug</a>
+    <div class="build">commit __GIT_SHA__</div>
   </footer>
   </div>
 
@@ -843,9 +851,9 @@ _STATUS_HTML = """<!DOCTYPE html>
 """
 
 STATUS_HTML = (
-    _STATUS_HTML.replace("/*__SESSION_TITLE_JS__*/", SESSION_TITLE_JS).replace(
-        "/*__STINT_SCROLL_JS__*/", STINT_SCROLL_JS
-    )
+    _STATUS_HTML.replace("/*__SESSION_TITLE_JS__*/", SESSION_TITLE_JS)
+    .replace("/*__STINT_SCROLL_JS__*/", STINT_SCROLL_JS)
+    .replace("__GIT_SHA__", short_git_sha())
 )
 
 DEBUG_HTML = """<!DOCTYPE html>
