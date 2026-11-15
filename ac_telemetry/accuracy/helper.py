@@ -273,8 +273,13 @@ def build_helper_page_data(
     session_id: str,
     lap_store: LapStore | None,
     subdir: str = "accuracy",
+    session_notes: str = "",
 ) -> dict[str, Any]:
-    """Laps + up to two crop URLs each for the eyeballing helper page."""
+    """Laps + up to two crop URLs each for the eyeballing helper page.
+
+    ``session_notes`` is the operator note from ``sessions.csv`` (not per-lap
+    CSV notes). Empty string when the session has none.
+    """
     sdir = session_dir(data_dir, session_id, subdir=subdir)
     manifest = _load_manifest(roi_manifest_path(sdir))
     holds = [
@@ -338,6 +343,7 @@ def build_helper_page_data(
         "artefact_dir": str(sdir),
         "gt_confirmed": confirmed["gt_confirmed"],
         "gt_confirmed_via": confirmed["via"],
+        "session_notes": (session_notes or "").strip(),
         "marks": [MARK_NORMAL, MARK_DOUBLE, MARK_SKIP],
         "note": (
             "Edit times and mark double/skip, then Confirm — writes "
