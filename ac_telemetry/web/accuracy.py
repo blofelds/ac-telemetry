@@ -87,15 +87,16 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     .session-notes {
       display: none; max-width: 960px; margin: 0 0 0.85rem;
       background: var(--panel); border: 1px solid var(--line);
-      border-radius: 6px; padding: 0.7rem 0.85rem;
-      font-size: 0.9rem; white-space: pre-wrap;
+      border-radius: 6px; padding: 0.55rem 0.85rem;
+      font-size: 0.9rem;
     }
     .session-notes.visible { display: block; }
     .session-notes.empty { color: var(--muted); }
     .session-notes .notes-label {
       display: block; font-size: 0.72rem; color: var(--muted);
-      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.35rem;
+      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.25rem;
     }
+    #session-notes-body { white-space: pre-wrap; }
     .legend {
       color: var(--muted); font-size: 0.8rem; margin: 0 0 0.75rem; max-width: 960px;
     }
