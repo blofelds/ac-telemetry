@@ -56,7 +56,7 @@ _STATUS_HTML = """<!DOCTYPE html>
       margin: 0.65rem 0 0.3rem;
     }
     label:first-child { margin-top: 0; }
-    input, textarea {
+    input, textarea, select {
       width: 100%;
       background: var(--input);
       color: var(--text);
@@ -82,6 +82,25 @@ _STATUS_HTML = """<!DOCTYPE html>
     button:disabled { opacity: 0.45; cursor: not-allowed; }
     .btn-start { background: var(--ok); color: #062016; }
     .btn-end { background: var(--bad); color: #fff; }
+    .btn-cancel { background: #2a3542; color: var(--text); }
+    .dialog-backdrop {
+      position: fixed; inset: 0; z-index: 40;
+      display: flex; align-items: flex-end; justify-content: center;
+      padding: 1rem; background: rgba(8, 12, 16, 0.72);
+    }
+    .dialog-backdrop.is-hidden { display: none !important; }
+    .dialog {
+      width: 100%; max-width: 420px;
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 8px; padding: 1rem;
+    }
+    .dialog-title {
+      font-size: 1.1rem; font-weight: 600; margin: 0 0 0.45rem;
+    }
+    .dialog-hint {
+      color: var(--muted); font-size: 0.88rem; margin: 0 0 0.35rem;
+      line-height: 1.35;
+    }
     .msg { margin-top: 0.75rem; font-size: 0.9rem; color: var(--muted); min-height: 1.2em; }
     .msg.err { color: var(--bad); }
     .current {
@@ -306,6 +325,24 @@ _STATUS_HTML = """<!DOCTYPE html>
     <a href="/api/sessions">/api/sessions</a> · <a href="/api/laps">/api/laps</a> ·
     <a href="/debug">ROI debug</a>
   </footer>
+  </div>
+
+  <div id="end-dialog" class="dialog-backdrop is-hidden" role="dialog"
+       aria-modal="true" aria-labelledby="end-dialog-title">
+    <div class="dialog">
+      <div class="dialog-title" id="end-dialog-title">End session</div>
+      <p class="dialog-hint">
+        Check that the last lap on screen is reflected in
+        <strong style="color:var(--text);font-weight:600">Last recorded</strong>
+        before ending.
+      </p>
+      <label for="driven-laps">Driven laps</label>
+      <select id="driven-laps" aria-label="Driven laps"></select>
+      <div class="actions">
+        <button type="button" class="btn-cancel" id="btn-end-cancel">Cancel</button>
+        <button type="button" class="btn-end" id="btn-end-confirm">End session</button>
+      </div>
+    </div>
   </div>
 
   <div id="dossier-view" aria-live="polite">
@@ -688,6 +725,36 @@ _STATUS_HTML = """<!DOCTYPE html>
     });
     window.addEventListener("hashchange", syncHashRoute);
 
+    function notesWithDrivenLaps(notes, n) {
+      // Append a clear driven-laps line for later GT / accuracy review.
+      const line = "Driven laps: " + n;
+      const trimmed = (notes || "").trim();
+      return trimmed ? trimmed + "\\n" + line : line;
+    }
+
+    function fillDrivenLapsOptions() {
+      const sel = $("driven-laps");
+      if (sel.options.length) return;
+      for (let i = 0; i <= 40; i++) {
+        const opt = document.createElement("option");
+        opt.value = String(i);
+        opt.textContent = String(i);
+        sel.appendChild(opt);
+      }
+    }
+
+    function openEndDialog() {
+      fillDrivenLapsOptions();
+      // Starting guess from recorded stint rows; operator corrects for misses/extras.
+      const recorded = document.querySelectorAll("#stint li:not(.empty)").length;
+      $("driven-laps").value = String(Math.min(40, Math.max(0, recorded)));
+      $("end-dialog").classList.remove("is-hidden");
+    }
+
+    function closeEndDialog() {
+      $("end-dialog").classList.add("is-hidden");
+    }
+
     $("btn-start").addEventListener("click", async () => {
       setMsg("Starting…");
       try {
@@ -714,8 +781,25 @@ _STATUS_HTML = """<!DOCTYPE html>
       }
     });
 
-    $("btn-end").addEventListener("click", async () => {
+    $("btn-end").addEventListener("click", () => {
       if (!currentId) return;
+      openEndDialog();
+    });
+
+    $("btn-end-cancel").addEventListener("click", () => {
+      closeEndDialog();
+    });
+
+    $("end-dialog").addEventListener("click", (ev) => {
+      if (ev.target === $("end-dialog")) closeEndDialog();
+    });
+
+    $("btn-end-confirm").addEventListener("click", async () => {
+      if (!currentId) return;
+      const driven = $("driven-laps").value;
+      const notes = notesWithDrivenLaps($("notes").value, driven);
+      $("notes").value = notes;
+      closeEndDialog();
       setMsg("Ending…");
       try {
         // Flush mid-session form edits onto the stopped row (start alone is not enough).
@@ -725,7 +809,7 @@ _STATUS_HTML = """<!DOCTYPE html>
           body: JSON.stringify({
             track: $("track").value.trim(),
             car: $("car").value.trim(),
-            notes: $("notes").value.trim(),
+            notes: notes,
           }),
         });
         const d = await r.json().catch(() => ({}));
