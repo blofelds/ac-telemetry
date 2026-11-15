@@ -44,6 +44,14 @@ def git_identity() -> dict[str, Any]:
     return {"git_sha": sha, "git_dirty": dirty}
 
 
+def short_git_sha(*, length: int = 8) -> str:
+    """Short commit hash for UI footers; ``unknown`` if git metadata is missing."""
+    sha = git_identity().get("git_sha")
+    if not isinstance(sha, str) or not sha.strip():
+        return "unknown"
+    return sha.strip()[: max(1, length)]
+
+
 @lru_cache(maxsize=1)
 def library_versions() -> dict[str, Any]:
     opencv = None
