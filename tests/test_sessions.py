@@ -77,12 +77,34 @@ def test_status_html_tyre_spelling_and_last_session_prefill() -> None:
     assert "prefillFromLastSession" in STATUS_HTML
     assert "GET /api/sessions" in STATUS_HTML or "/api/sessions?limit=20" in STATUS_HTML
     # End Session must flush form values — empty-body end discarded mid-session edits.
-    end_block = STATUS_HTML.split('$("btn-end").addEventListener', 1)[1]
+    # Confirm button (not the opener) posts /end with track/car/notes.
+    end_block = STATUS_HTML.split('$("btn-end-confirm").addEventListener', 1)[1]
     assert "/end" in end_block
     assert "JSON.stringify" in end_block
     assert 'track: $("track").value.trim()' in end_block
     assert 'car: $("car").value.trim()' in end_block
-    assert 'notes: $("notes").value.trim()' in end_block
+    assert "notes: notes" in end_block
+    assert "notesWithDrivenLaps" in end_block
+
+
+def test_status_html_end_session_driven_laps_prompt() -> None:
+    """Stop-session dialog: driven-laps dropdown, notes append, Last recorded reminder."""
+    from ac_telemetry.web import STATUS_HTML
+
+    assert 'id="end-dialog"' in STATUS_HTML
+    assert 'id="driven-laps"' in STATUS_HTML
+    assert "Driven laps" in STATUS_HTML
+    assert "Last recorded" in STATUS_HTML
+    assert "notesWithDrivenLaps" in STATUS_HTML
+    assert '"Driven laps: "' in STATUS_HTML or "'Driven laps: '" in STATUS_HTML
+    assert "openEndDialog" in STATUS_HTML
+    assert '$("btn-end").addEventListener' in STATUS_HTML
+    assert '$("btn-end-confirm").addEventListener' in STATUS_HTML
+    # Opener shows the prompt; it must not post /end itself.
+    opener = STATUS_HTML.split('$("btn-end").addEventListener', 1)[1]
+    opener_body = opener.split('$("btn-end-confirm").addEventListener', 1)[0]
+    assert "openEndDialog" in opener_body
+    assert "/end" not in opener_body
 
 
 def test_end_session_flushes_mid_session_track_car_notes(tmp_path: Path) -> None:
