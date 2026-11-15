@@ -488,6 +488,32 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found")
         return {"session": row}
 
+    @app.get("/api/sessions/{session_id}/summary")
+    def api_session_summary(
+        session_id: str,
+        limit: int = Query(default=500, ge=1, le=500),
+    ) -> dict[str, Any]:
+        """Session metadata + lap aggregates for the phone dossier drill-in."""
+        row = store.get_session(session_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if lap_store is None:
+            summary: dict[str, Any] = {
+                "session_id": session_id,
+                "lap_count": 0,
+                "timed_lap_count": 0,
+                "best_ms": None,
+                "best_lap_time": None,
+                "best_lap_number": None,
+                "avg_ms": None,
+                "avg_lap_time": None,
+                "spread_ms": None,
+                "laps": [],
+            }
+        else:
+            summary = lap_store.summarize_session(session_id, limit=limit)
+        return {"session": row, "summary": summary}
+
     @app.post("/api/sessions", status_code=201)
     def api_session_create(body: SessionCreate) -> dict[str, Any]:
         try:
