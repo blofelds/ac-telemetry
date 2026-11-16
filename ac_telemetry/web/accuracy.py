@@ -40,7 +40,7 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     .sub { color: var(--muted); margin: 0 0 1rem; font-size: 0.9rem; }
     .bar {
       display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end;
-      margin-bottom: 1rem; max-width: 960px;
+      margin-bottom: 1.6rem; max-width: 960px;
     }
     label {
       display: block; font-size: 0.72rem; color: var(--muted);
@@ -60,9 +60,14 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     button:disabled { opacity: 0.45; cursor: not-allowed; }
     .btn-load { background: var(--accent); color: #fff; }
     .btn-confirm { background: var(--ok); color: #062016; }
+    .action-col { position: relative; }
     .msg { margin: 0.5rem 0 1rem; font-size: 0.9rem; color: var(--muted); min-height: 1.2em; }
     .msg.err { color: var(--bad); }
     .msg.ok { color: var(--ok); }
+    .action-col .msg {
+      position: absolute; top: 100%; left: 0;
+      margin: 0.25rem 0 0; min-height: 1.2em; white-space: nowrap;
+    }
     .gt-banner {
       display: none; align-items: center; gap: 0.65rem; flex-wrap: wrap;
       max-width: 960px; margin: 0 0 0.85rem; padding: 0.55rem 0.75rem;
@@ -156,7 +161,10 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       background: transparent; color: var(--skip);
       border: 1px solid var(--skip); border-radius: 4px;
     }
-    .footer-actions { margin-top: 1rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
+    .footer-actions {
+      margin-top: 1rem; margin-bottom: 1.6rem;
+      display: flex; gap: 0.6rem; flex-wrap: wrap;
+    }
     a.home { color: var(--accent); font-size: 0.85rem; }
   </style>
 </head>
@@ -170,7 +178,10 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       <label for="session">Session</label>
       <select id="session"></select>
     </div>
-    <button type="button" class="btn-load" id="load">Load</button>
+    <div class="action-col">
+      <button type="button" class="btn-load" id="load">Load</button>
+      <div class="msg" id="load-status" aria-live="polite"></div>
+    </div>
   </div>
   <div class="gt-banner" id="gt-banner" role="status" aria-live="polite">
     <span class="gt-badge" id="gt-badge"></span>
@@ -188,7 +199,10 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
   <div class="msg" id="msg"></div>
   <div class="laps" id="laps"></div>
   <div class="footer-actions">
-    <button type="button" class="btn-confirm" id="confirm" disabled>Confirm</button>
+    <div class="action-col">
+      <button type="button" class="btn-confirm" id="confirm" disabled>Confirm</button>
+      <div class="msg" id="confirm-status" aria-live="polite"></div>
+    </div>
   </div>
 
   <script>
@@ -204,6 +218,18 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       const el = $("msg");
       el.textContent = text || "";
       el.className = "msg" + (cls ? " " + cls : "");
+    }
+
+    function setLoadStatus(text) {
+      const el = $("load-status");
+      el.textContent = text || "";
+      el.className = "msg";
+    }
+
+    function setConfirmStatus(text) {
+      const el = $("confirm-status");
+      el.textContent = text || "";
+      el.className = "msg";
     }
 
     function markOf(lap) {
@@ -438,36 +464,41 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
       }
       currentSid = sid;
       history.replaceState(null, "", "/accuracy/" + encodeURIComponent(sid));
-      setMsg("Loading…");
-      const res = await fetch("/api/accuracy/sessions/" + encodeURIComponent(sid) + "/helper");
-      if (!res.ok) {
-        const detail = await res.text();
-        setMsg("Load failed: " + detail, "err");
-        hideGtBanner();
-        hideSessionNotes();
-        $("confirm").disabled = true;
-        return;
+      setLoadStatus("Loading…");
+      setMsg("");
+      try {
+        const res = await fetch("/api/accuracy/sessions/" + encodeURIComponent(sid) + "/helper");
+        if (!res.ok) {
+          const detail = await res.text();
+          setMsg("Load failed: " + detail, "err");
+          hideGtBanner();
+          hideSessionNotes();
+          $("confirm").disabled = true;
+          return;
+        }
+        const data = await res.json();
+        renderLaps(data.laps || []);
+        setGtBanner(!!data.gt_confirmed, data.gt_confirmed_via || []);
+        setSessionNotes(data.session_notes || "");
+        confirmedBySid[sid] = {
+          session_id: sid,
+          gt_confirmed: !!data.gt_confirmed,
+          via: data.gt_confirmed_via || [],
+        };
+        // Refresh the selected option label so the list stays in sync.
+        const opt = Array.from($("session").options).find((o) => o.value === sid);
+        if (opt) {
+          const base = opt.textContent.replace(/ · GT confirmed$/, "");
+          opt.textContent = data.gt_confirmed ? base + " · GT confirmed" : base;
+        }
+        setMsg(
+          (data.laps || []).length + " laps · " +
+          (data.roi_frame_count || 0) + " tee frames · " +
+          (data.hold_count || 0) + " holds"
+        );
+      } finally {
+        setLoadStatus("");
       }
-      const data = await res.json();
-      renderLaps(data.laps || []);
-      setGtBanner(!!data.gt_confirmed, data.gt_confirmed_via || []);
-      setSessionNotes(data.session_notes || "");
-      confirmedBySid[sid] = {
-        session_id: sid,
-        gt_confirmed: !!data.gt_confirmed,
-        via: data.gt_confirmed_via || [],
-      };
-      // Refresh the selected option label so the list stays in sync.
-      const opt = Array.from($("session").options).find((o) => o.value === sid);
-      if (opt) {
-        const base = opt.textContent.replace(/ · GT confirmed$/, "");
-        opt.textContent = data.gt_confirmed ? base + " · GT confirmed" : base;
-      }
-      setMsg(
-        (data.laps || []).length + " laps · " +
-        (data.roi_frame_count || 0) + " tee frames · " +
-        (data.hold_count || 0) + " holds"
-      );
     }
 
     async function confirmGt() {
@@ -495,43 +526,47 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
         }
       }
       $("confirm").disabled = true;
-      setMsg("Confirming…");
-      const res = await fetch(
-        "/api/accuracy/sessions/" + encodeURIComponent(sid) + "/gt/confirm",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ laps, score: true }),
+      setConfirmStatus("Confirming…");
+      setMsg("");
+      try {
+        const res = await fetch(
+          "/api/accuracy/sessions/" + encodeURIComponent(sid) + "/gt/confirm",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ laps, score: true }),
+          }
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setMsg("Confirm failed: " + (body.detail || res.status), "err");
+          return;
         }
-      );
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setMsg("Confirm failed: " + (body.detail || res.status), "err");
+        const sc = body.score || {};
+        const wp = sc.write_pct != null ? sc.write_pct : "n/a";
+        setGtBanner(true, ["gt.json", "gt_draft.json", "laps.csv"]);
+        confirmedBySid[sid] = {
+          session_id: sid,
+          gt_confirmed: true,
+          via: ["gt.json", "gt_draft.json", "laps.csv"],
+        };
+        const opt = Array.from($("session").options).find((o) => o.value === sid);
+        if (opt && !/ · GT confirmed$/.test(opt.textContent)) {
+          opt.textContent += " · GT confirmed";
+        }
+        setMsg(
+          "Confirmed · write% " + wp +
+          " · doubles " + (body.gt_doubles || sc.write_doubles || 0) +
+          " · skips " + (body.gt_skips || sc.gt_skips || 0) +
+          " · misses " + (sc.write_misses != null ? sc.write_misses : "?") +
+          " · extras " + (sc.write_extras != null ? sc.write_extras : "?") +
+          " · note on " + (body.csv_laps_updated || 0) + " CSV laps",
+          "ok"
+        );
+      } finally {
+        setConfirmStatus("");
         $("confirm").disabled = false;
-        return;
       }
-      const sc = body.score || {};
-      const wp = sc.write_pct != null ? sc.write_pct : "n/a";
-      setGtBanner(true, ["gt.json", "gt_draft.json", "laps.csv"]);
-      confirmedBySid[sid] = {
-        session_id: sid,
-        gt_confirmed: true,
-        via: ["gt.json", "gt_draft.json", "laps.csv"],
-      };
-      const opt = Array.from($("session").options).find((o) => o.value === sid);
-      if (opt && !/ · GT confirmed$/.test(opt.textContent)) {
-        opt.textContent += " · GT confirmed";
-      }
-      setMsg(
-        "Confirmed · write% " + wp +
-        " · doubles " + (body.gt_doubles || sc.write_doubles || 0) +
-        " · skips " + (body.gt_skips || sc.gt_skips || 0) +
-        " · misses " + (sc.write_misses != null ? sc.write_misses : "?") +
-        " · extras " + (sc.write_extras != null ? sc.write_extras : "?") +
-        " · note on " + (body.csv_laps_updated || 0) + " CSV laps",
-        "ok"
-      );
-      $("confirm").disabled = false;
     }
 
     $("load").addEventListener("click", () => loadHelper().catch((e) => setMsg(String(e), "err")));
