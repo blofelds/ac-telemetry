@@ -601,9 +601,11 @@ _STATUS_HTML = """<!DOCTYPE html>
 
     async function loadDossier(sessionId) {
       if (!sessionId) return;
+      // Keep prior content on poll refresh; only show Loading on first open / session switch.
+      const showLoading = dossierId !== sessionId;
       dossierId = sessionId;
       document.body.classList.add("dossier");
-      $("dossier-title").textContent = "Loading…";
+      if (showLoading) $("dossier-title").textContent = "Loading…";
       try {
         const r = await fetch(
           "/api/sessions/" + encodeURIComponent(sessionId) + "/summary"
