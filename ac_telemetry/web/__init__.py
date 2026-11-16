@@ -361,8 +361,8 @@ _STATUS_HTML = """<!DOCTYPE html>
     <div class="grid" style="margin-bottom:0.75rem">
       <div class="stat"><div class="label">Laps</div><div class="value" id="dossier-laps-n">—</div></div>
       <div class="stat"><div class="label">Best</div><div class="value" id="dossier-best" style="color:var(--lap)">—</div></div>
-      <div class="stat"><div class="label">Avg</div><div class="value" id="dossier-avg">—</div></div>
-      <div class="stat"><div class="label">Spread</div><div class="value" id="dossier-spread">—</div></div>
+      <div class="stat"><div class="label">5-lap pace</div><div class="value" id="dossier-pace-5">—</div></div>
+      <div class="stat"><div class="label">10-lap pace</div><div class="value" id="dossier-pace-10">—</div></div>
     </div>
     <div class="view-toggle" role="group" aria-label="Lap view">
       <button type="button" id="view-list" class="active" data-view="list">List</button>
@@ -511,21 +511,6 @@ _STATUS_HTML = """<!DOCTYPE html>
         .replace(/"/g, "&quot;");
     }
 
-    function formatSpread(ms) {
-      if (ms == null) return "—";
-      const n = Number(ms);
-      if (!Number.isFinite(n)) return "—";
-      if (n >= 60000) {
-        const m = Math.floor(n / 60000);
-        const rem = n % 60000;
-        const sec = Math.floor(rem / 1000);
-        const milli = rem % 1000;
-        return m + ":" + String(sec).padStart(2, "0") + "." +
-          String(milli).padStart(3, "0");
-      }
-      return (n / 1000).toFixed(3) + "s";
-    }
-
     function setDossierViewMode(mode) {
       dossierView = mode === "board" ? "board" : "list";
       $("view-list").classList.toggle("active", dossierView === "list");
@@ -594,8 +579,8 @@ _STATUS_HTML = """<!DOCTYPE html>
       $("dossier-laps-n").textContent =
         summary.lap_count != null ? String(summary.lap_count) : "—";
       $("dossier-best").textContent = summary.best_lap_time || "—";
-      $("dossier-avg").textContent = summary.avg_lap_time || "—";
-      $("dossier-spread").textContent = formatSpread(summary.spread_ms);
+      $("dossier-pace-5").textContent = summary.pace_5_lap_time || "—";
+      $("dossier-pace-10").textContent = summary.pace_10_lap_time || "—";
       renderDossierLaps(summary.laps || []);
     }
 
