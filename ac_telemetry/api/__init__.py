@@ -505,9 +505,10 @@ def create_app(
                 "best_ms": None,
                 "best_lap_time": None,
                 "best_lap_number": None,
-                "avg_ms": None,
-                "avg_lap_time": None,
-                "spread_ms": None,
+                "pace_5_ms": None,
+                "pace_5_lap_time": None,
+                "pace_10_ms": None,
+                "pace_10_lap_time": None,
                 "laps": [],
             }
         else:
