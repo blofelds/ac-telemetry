@@ -122,6 +122,35 @@ class LapStore:
         seconds = abs_ms / 1000.0
         return f"{sign}{seconds:.3f}"
 
+    @classmethod
+    def min_contiguous_avg_ms(
+        cls,
+        laps_chrono: list[dict[str, Any]],
+        window: int,
+    ) -> int | None:
+        """Minimum mean over any contiguous run of ``window`` timed laps.
+
+        ``laps_chrono`` must be oldest-first session order. A window counts
+        only when every lap in it has a valid ``lap_time_ms`` (invalid rows
+        break contiguity). Returns ``None`` when no such window exists.
+        """
+        if window < 1 or len(laps_chrono) < window:
+            return None
+        times = [cls._lap_ms(row) for row in laps_chrono]
+        best: int | None = None
+        for i in range(len(times) - window + 1):
+            chunk = times[i : i + window]
+            if any(ms is None for ms in chunk):
+                continue
+            total = 0
+            for ms in chunk:
+                assert ms is not None  # narrowed by the any(...) check above
+                total += ms
+            avg = total // window
+            if best is None or avg < best:
+                best = avg
+        return best
+
     def summarize_session(
         self,
         session_id: str,
@@ -132,7 +161,7 @@ class LapStore:
 
         Laps are newest-first (same as ``list_laps``). Invalid / missing
         ``lap_time_ms`` rows stay in the list with null deltas and are
-        excluded from best/avg/spread.
+        excluded from best and from contiguous pace windows.
         """
         laps = self.list_laps(session_id=session_id, limit=limit)
         timed: list[tuple[dict[str, Any], int]] = []
@@ -144,9 +173,6 @@ class LapStore:
         best_ms: int | None = None
         best_lap_number: str | None = None
         best_lap_time: str | None = None
-        avg_ms: int | None = None
-        avg_lap_time: str | None = None
-        spread_ms: int | None = None
 
         if timed:
             best_ms = min(ms for _, ms in timed)
@@ -161,9 +187,15 @@ class LapStore:
                 best_lap_time = str(best_row.get("lap_time") or "") or format_lap_time_ms(
                     best_ms
                 )
-            avg_ms = sum(ms for _, ms in timed) // len(timed)
-            avg_lap_time = format_lap_time_ms(avg_ms)
-            spread_ms = max(ms for _, ms in timed) - best_ms
+
+        # Contiguous pace uses chronological (oldest-first) order.
+        chrono = list(reversed(laps))
+        pace_5_ms = self.min_contiguous_avg_ms(chrono, 5)
+        pace_10_ms = self.min_contiguous_avg_ms(chrono, 10)
+        pace_5_lap_time = format_lap_time_ms(pace_5_ms) if pace_5_ms is not None else None
+        pace_10_lap_time = (
+            format_lap_time_ms(pace_10_ms) if pace_10_ms is not None else None
+        )
 
         enriched: list[dict[str, Any]] = []
         for row in laps:
@@ -187,9 +219,10 @@ class LapStore:
             "best_ms": best_ms,
             "best_lap_time": best_lap_time,
             "best_lap_number": best_lap_number,
-            "avg_ms": avg_ms,
-            "avg_lap_time": avg_lap_time,
-            "spread_ms": spread_ms,
+            "pace_5_ms": pace_5_ms,
+            "pace_5_lap_time": pace_5_lap_time,
+            "pace_10_ms": pace_10_ms,
+            "pace_10_lap_time": pace_10_lap_time,
             "laps": enriched,
         }
 
