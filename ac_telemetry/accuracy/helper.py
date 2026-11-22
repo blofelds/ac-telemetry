@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 from ac_telemetry.accuracy.paths import (
     gt_draft_path,
     gt_path,
+    laps_written_path,
     roi_manifest_path,
     session_dir,
 )
@@ -18,13 +20,16 @@ from ac_telemetry.accuracy.score import (
     MARK_NORMAL,
     MARK_SKIP,
     load_gt_list,
+    load_laps_written,
     normalize_lap_text,
     normalize_mark,
     prefills_from_csv,
     save_gt,
     score_session,
+    scoring_csv_laps,
 )
-from ac_telemetry.store.laps import LapStore
+from ac_telemetry.detect.readers import format_lap_time_ms
+from ac_telemetry.store.laps import LAP_FIELDS, LapStore
 
 logger = logging.getLogger(__name__)
 
@@ -288,11 +293,17 @@ def build_helper_page_data(
         if h and normalize_lap_text((h[0].get("text") or "")) is not None
     ]
 
+    # Prefer frozen OCR-as-written so re-Confirm still sees doubles/skips
+    # against the detect log, not the GT-doctored customer CSV.
     if lap_store is None:
         draft_laps: list[dict[str, Any]] = []
     else:
-        csv_laps = lap_store.list_laps(session_id=session_id, limit=500)
-        draft_laps = prefills_from_csv(csv_laps)
+        written = load_laps_written(sdir)
+        if written is not None:
+            draft_laps = prefills_from_csv(written)
+        else:
+            csv_laps = lap_store.list_laps(session_id=session_id, limit=500)
+            draft_laps = prefills_from_csv(csv_laps)
 
     saved = _load_saved_gt_laps(sdir)
     draft_laps = _merge_saved_marks(draft_laps, saved)
@@ -347,7 +358,9 @@ def build_helper_page_data(
         "marks": [MARK_NORMAL, MARK_DOUBLE, MARK_SKIP],
         "note": (
             "Edit times and mark double/skip, then Confirm — writes "
-            "gt_draft.json + gt.json and updates laps.csv notes/times."
+            "gt_draft.json + gt.json, freezes OCR to laps_written.csv "
+            "(once), and rewrites this session's customer laps.csv as "
+            "contiguous GT (skips inserted, doubles dropped)."
         ),
     }
 
@@ -370,26 +383,122 @@ def save_gt_draft(
     return path
 
 
-def _lap_updates_from_gt(
-    gt_laps: list[dict[str, Any]],
+def _ocr_rows_chrono(
+    *,
+    data_dir: Path,
+    session_id: str,
+    lap_store: LapStore | None,
+    subdir: str,
 ) -> list[dict[str, Any]]:
-    """Map GT rows with a CSV ref → LapStore updates (skips have no CSV)."""
-    updates: list[dict[str, Any]] = []
+    """OCR-as-written rows oldest-first (frozen written file, else customer CSV)."""
+    newest_first, _source = scoring_csv_laps(
+        data_dir=data_dir,
+        session_id=session_id,
+        subdir=subdir,
+        lap_store=lap_store,
+    )
+    return list(reversed(newest_first))
+
+
+def freeze_laps_written_once(
+    *,
+    data_dir: Path,
+    session_id: str,
+    lap_store: LapStore,
+    subdir: str = "accuracy",
+) -> tuple[Path, bool]:
+    """Copy current customer OCR rows to ``laps_written.csv`` if absent.
+
+    Returns ``(path, newly_frozen)``. Never overwrites an existing freeze.
+    """
+    sdir = session_dir(data_dir, session_id, subdir=subdir)
+    sdir.mkdir(parents=True, exist_ok=True)
+    path = laps_written_path(sdir)
+    if path.is_file():
+        return path, False
+
+    # Customer CSV is still OCR-as-written on first Confirm.
+    chrono = list(reversed(lap_store.list_laps(session_id=session_id, limit=500)))
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=LAP_FIELDS)
+        writer.writeheader()
+        for row in chrono:
+            writer.writerow({k: row.get(k, "") for k in LAP_FIELDS})
+    logger.info(
+        "Froze OCR-as-written laps → %s (%d rows)", path, len(chrono)
+    )
+    return path, True
+
+
+def build_gt_customer_rows(
+    *,
+    session_id: str,
+    gt_laps: list[dict[str, Any]],
+    ocr_chrono: list[dict[str, Any]],
+    note: str = GT_CONFIRMED_NOTE,
+) -> list[dict[str, Any]]:
+    """Contiguous GT sequence 1…N for customer ``laps.csv``.
+
+    * **normal** — keep OCR metadata (``recorded_at`` / ``source`` / ``raw_text``)
+      when ``csv_lap_number`` maps; times always from GT (corrected).
+    * **skip** — insert with blank ``recorded_at``; times from GT.
+    * **double** — dropped (false extra write).
+    """
+    by_number: dict[str, dict[str, Any]] = {}
+    for row in ocr_chrono:
+        key = str(row.get("lap_number") or "").strip()
+        if key and key not in by_number:
+            by_number[key] = row
+
+    out: list[dict[str, Any]] = []
+    n = 0
     for gt in gt_laps:
         mark = normalize_mark(gt.get("mark"))
+        if mark == MARK_DOUBLE:
+            continue
+        n += 1
+        text = str(gt.get("lap_time") or "")
+        ms = gt.get("lap_time_ms")
+        if ms is None or str(ms).strip() == "":
+            ms_s = ""
+        else:
+            ms_s = str(int(ms))
+            if not text:
+                text = format_lap_time_ms(int(ms))
+
         if mark == MARK_SKIP:
+            out.append(
+                {
+                    "session_id": session_id,
+                    "lap_number": str(n),
+                    "lap_time": text,
+                    "lap_time_ms": ms_s,
+                    "recorded_at": "",
+                    "source": "gt_skip",
+                    "raw_text": "",
+                    "note": note,
+                }
+            )
             continue
+
+        ocr: dict[str, Any] | None = None
         csv_n = gt.get("csv_lap_number")
-        if csv_n is None or str(csv_n).strip() == "":
-            continue
-        updates.append(
+        key = str(csv_n).strip() if csv_n is not None else ""
+        if key:
+            ocr = by_number.get(key)
+        out.append(
             {
-                "lap_time": gt["lap_time"],
-                "lap_time_ms": gt["lap_time_ms"],
-                "lap_number": csv_n,
+                "session_id": session_id,
+                "lap_number": str(n),
+                "lap_time": text,
+                "lap_time_ms": ms_s,
+                "recorded_at": (ocr or {}).get("recorded_at") or "",
+                "source": (ocr or {}).get("source") or "gt",
+                "raw_text": (ocr or {}).get("raw_text") or "",
+                "note": note,
             }
         )
-    return updates
+    return out
 
 
 def _gt_row_for_files(g: dict[str, Any], *, default_note: str) -> dict[str, Any]:
@@ -419,6 +528,8 @@ def enrich_gt_with_csv_refs(
     *,
     lap_store: LapStore | None,
     session_id: str,
+    data_dir: Path | None = None,
+    subdir: str = "accuracy",
 ) -> list[dict[str, Any]]:
     """Normalize GT and carry csv_lap_number from confirm body or CSV order."""
     # Preserve csv_lap_number / mark from dict items before load_gt_list.
@@ -438,12 +549,21 @@ def enrich_gt_with_csv_refs(
 
     gt_laps = load_gt_list(raw_laps)
 
-    # Fill missing csv_lap_number from chronological CSV prefill order —
-    # but never invent a CSV ref for explicit skips (GT without CSV).
+    # Fill missing csv_lap_number from OCR-as-written order (frozen written
+    # file when present) — never invent a CSV ref for explicit skips.
     chrono_nums: list[Any] = []
     if lap_store is not None:
-        csv_laps = lap_store.list_laps(session_id=session_id, limit=500)
-        for row in prefills_from_csv(csv_laps):
+        if data_dir is not None:
+            written_or_customer, _src = scoring_csv_laps(
+                data_dir=data_dir,
+                session_id=session_id,
+                subdir=subdir,
+                lap_store=lap_store,
+            )
+            prefill_src = written_or_customer
+        else:
+            prefill_src = lap_store.list_laps(session_id=session_id, limit=500)
+        for row in prefills_from_csv(prefill_src):
             chrono_nums.append(row.get("csv_lap_number"))
 
     # Positional fill only among non-skip rows that lack an explicit csv ref,
@@ -490,9 +610,23 @@ def confirm_helper_gt(
     score: bool = True,
     note: str = GT_CONFIRMED_NOTE,
 ) -> dict[str, Any]:
-    """Confirm GT from the helper: draft + gt.json + stint CSV note/times."""
+    """Confirm GT: artefacts + freeze OCR once + rewrite customer laps.csv.
+
+    1. Write ``gt_draft.json`` / ``gt.json`` (with per-row ``mark``).
+    2. On first Confirm, copy OCR customer rows → ``laps_written.csv`` (never
+       overwrite on re-Confirm).
+    3. Replace this session's customer ``laps.csv`` block with contiguous GT
+       sequence 1…N (insert skips with blank ``recorded_at``, drop doubles,
+       times from GT). Other sessions untouched.
+    4. Score write% / ocr-sample% against frozen ``laps_written.csv``, never
+       the doctored customer CSV.
+    """
     gt_laps = enrich_gt_with_csv_refs(
-        raw_laps, lap_store=lap_store, session_id=session_id
+        raw_laps,
+        lap_store=lap_store,
+        session_id=session_id,
+        data_dir=data_dir,
+        subdir=subdir,
     )
     gt_for_files = [
         _gt_row_for_files(g, default_note=note) for g in gt_laps
@@ -512,16 +646,30 @@ def confirm_helper_gt(
     )
 
     csv_updated = 0
+    written_path: Path | None = None
+    newly_frozen = False
     if lap_store is not None:
-        updates = _lap_updates_from_gt(gt_laps)
-        # Stamp session CSV rows with the confirm note; double/skip annotation
-        # lives on gt.json / gt_draft.json via mark= (avoids per-row CSV notes).
-        result = lap_store.update_session_laps(
-            session_id,
-            note=note,
-            lap_updates=updates,
+        # Freeze OCR-as-written before rewriting customer CSV.
+        written_path, newly_frozen = freeze_laps_written_once(
+            data_dir=data_dir,
+            session_id=session_id,
+            lap_store=lap_store,
+            subdir=subdir,
         )
-        csv_updated = int(result.get("updated", 0))
+        ocr_chrono = _ocr_rows_chrono(
+            data_dir=data_dir,
+            session_id=session_id,
+            lap_store=lap_store,
+            subdir=subdir,
+        )
+        customer_rows = build_gt_customer_rows(
+            session_id=session_id,
+            gt_laps=gt_laps,
+            ocr_chrono=ocr_chrono,
+            note=note,
+        )
+        result = lap_store.replace_session_laps(session_id, customer_rows)
+        csv_updated = int(result.get("replaced", 0))
 
     payload: dict[str, Any] = {
         "ok": True,
@@ -535,6 +683,8 @@ def confirm_helper_gt(
         "gt_skips": sum(1 for g in gt_for_files if g.get("mark") == MARK_SKIP),
         "csv_laps_updated": csv_updated,
         "csv_note": note,
+        "laps_written_path": None if written_path is None else str(written_path),
+        "laps_written_frozen": newly_frozen,
     }
     if score:
         if lap_store is None:
@@ -554,6 +704,7 @@ def confirm_helper_gt(
             "write_extras": report["write_extras"],
             "write_doubles": report.get("write_doubles", 0),
             "gt_skips": report.get("gt_skips", 0),
+            "csv_source": report.get("csv_source"),
             "artefact_dir": report["artefact_dir"],
             "score_json": f"{report['artefact_dir']}/score.json",
             "score_md": f"{report['artefact_dir']}/score.md",

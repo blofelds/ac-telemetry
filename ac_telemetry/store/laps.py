@@ -331,3 +331,90 @@ class LapStore:
             "session_laps": len(session_idxs),
             "times_changed": times_changed,
         }
+
+    def session_ids_with_gt_confirmed(
+        self,
+        *,
+        notes: frozenset[str] | set[str] | None = None,
+    ) -> set[str]:
+        """Session ids that have at least one lap ``note`` in ``notes``.
+
+        Default notes are ``gt_confirmed`` / ``gt_double`` (Confirm stamps).
+        """
+        wanted = notes or frozenset({"gt_confirmed", "gt_double"})
+        self.ensure()
+        found: set[str] = set()
+        with self._lock:
+            with self.path.open(encoding="utf-8") as fh:
+                for row in csv.DictReader(fh):
+                    sid = str(row.get("session_id") or "").strip()
+                    if not sid or sid in found:
+                        continue
+                    note = str(row.get("note") or "").strip()
+                    if note in wanted:
+                        found.add(sid)
+        return found
+
+    def session_has_gt_confirmed(
+        self,
+        session_id: str,
+        *,
+        notes: frozenset[str] | set[str] | None = None,
+    ) -> bool:
+        """True when any lap row for ``session_id`` carries a Confirm note."""
+        wanted = notes or frozenset({"gt_confirmed", "gt_double"})
+        self.ensure()
+        with self._lock:
+            with self.path.open(encoding="utf-8") as fh:
+                for row in csv.DictReader(fh):
+                    if row.get("session_id") != session_id:
+                        continue
+                    if str(row.get("note") or "").strip() in wanted:
+                        return True
+        return False
+
+    def replace_session_laps(
+        self,
+        session_id: str,
+        rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Replace every ``session_id`` block with ``rows`` (other sessions kept).
+
+        New rows are written contiguously at the first former occurrence of the
+        session (or appended if the session had no prior rows). Each row is
+        normalized to ``LAP_FIELDS``; missing keys become empty strings.
+        """
+        self.ensure()
+        normalized = [{k: str(r.get(k, "") if r.get(k) is not None else "") for k in LAP_FIELDS} for r in rows]
+        for row in normalized:
+            row["session_id"] = session_id
+
+        with self._lock:
+            with self.path.open(encoding="utf-8") as fh:
+                all_rows = list(csv.DictReader(fh))
+
+            new_rows: list[dict[str, str]] = []
+            inserted = False
+            removed = 0
+            for raw in all_rows:
+                if raw.get("session_id") == session_id:
+                    removed += 1
+                    if not inserted:
+                        new_rows.extend(normalized)
+                        inserted = True
+                    continue
+                new_rows.append({k: raw.get(k, "") for k in LAP_FIELDS})
+            if not inserted:
+                new_rows.extend(normalized)
+
+            with self.path.open("w", newline="", encoding="utf-8") as fh:
+                writer = csv.DictWriter(fh, fieldnames=LAP_FIELDS)
+                writer.writeheader()
+                for row in new_rows:
+                    writer.writerow({k: row.get(k, "") for k in LAP_FIELDS})
+
+        return {
+            "replaced": len(normalized),
+            "removed": removed,
+            "session_laps": len(normalized),
+        }

@@ -471,8 +471,18 @@ def create_app(
     def api_sessions(
         limit: int = Query(default=50, ge=1, le=500),
     ) -> dict[str, Any]:
+        sessions = store.list_sessions(limit=limit)
+        confirmed: set[str] = set()
+        if lap_store is not None:
+            confirmed = lap_store.session_ids_with_gt_confirmed()
+        out = []
+        for row in sessions:
+            item = dict(row)
+            sid = str(item.get("session_id") or "").strip()
+            item["gt_confirmed"] = sid in confirmed
+            out.append(item)
         return {
-            "sessions": store.list_sessions(limit=limit),
+            "sessions": out,
             "current": store.current_session(),
         }
 
@@ -510,9 +520,11 @@ def create_app(
                 "pace_10_ms": None,
                 "pace_10_lap_time": None,
                 "laps": [],
+                "gt_confirmed": False,
             }
         else:
             summary = lap_store.summarize_session(session_id, limit=limit)
+            summary["gt_confirmed"] = lap_store.session_has_gt_confirmed(session_id)
         return {"session": row, "summary": summary}
 
     @app.post("/api/sessions", status_code=201)

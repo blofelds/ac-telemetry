@@ -21,8 +21,16 @@ from ac_telemetry.store.laps import LapStore
 
 
 def _cmd_prefill(args: argparse.Namespace) -> int:
-    store = LapStore(Path(args.data_dir))
-    laps = store.list_laps(session_id=args.session_id, limit=500)
+    from ac_telemetry.accuracy.score import scoring_csv_laps
+
+    data_dir = Path(args.data_dir)
+    store = LapStore(data_dir)
+    laps, _src = scoring_csv_laps(
+        data_dir=data_dir,
+        session_id=args.session_id,
+        subdir=args.subdir,
+        lap_store=store,
+    )
     draft = prefills_from_csv(laps)
     out = {"session_id": args.session_id, "laps": draft}
     text = json.dumps(out, indent=2) + "\n"

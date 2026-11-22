@@ -97,9 +97,18 @@ every row (including skips) and calls
 
 1. Writes `gt_draft.json` and `gt.json` (including per-row `mark`) under the
    accuracy session dir
-2. Sets `note=gt_confirmed` on session rows in `laps.csv`
-3. Updates `lap_time` / `lap_time_ms` on CSV rows tied to normal/double marks
-4. Scores write% / ocr-sample% with doubles/skips applied (see Marks below)
+2. On **first** Confirm for the session, copies OCR customer rows to
+   `laps_written.csv` (never overwritten on re-Confirm)
+3. Replaces that session’s block in customer `data/sessions/laps.csv` with a
+   contiguous GT sequence `1…N`: inserts skips (blank `recorded_at`), drops
+   doubles (keeps corrected GT time on kept rows), times from GT. Other
+   sessions are untouched
+4. Scores write% / ocr-sample% against frozen `laps_written.csv` (OCR-as-written),
+   never the doctored customer CSV — doubles/skips applied (see Marks below)
+
+Phone History / dossier show raw OCR laps until Confirm; after Confirm they
+show the GT customer CSV (pace/best follow that file) plus a **GT confirmed**
+badge.
 
 Page data: `GET /api/accuracy/sessions/{id}/helper` (laps + crop URLs + marks).
 Crops: `GET /api/accuracy/sessions/{id}/roi/{filename}.jpg`.
@@ -147,8 +156,12 @@ Under `{data_dir}/accuracy/{session_id}/` (default `data/sessions/accuracy/<id>/
 | `ocr_samples.jsonl` | Every detect sample (full rate — drives ocr-sample%) |
 | `gt_draft.json` | Helper Confirm draft (same laps as `gt.json`) |
 | `gt.json` | Confirmed GT list |
+| `laps_written.csv` | Frozen OCR-as-written rows (first Confirm only; scoring source) |
 | `score.json` / `score.md` | write% + ocr-sample% summary |
 | `review.md` | **Every** GT lap: CSV write, OCR histogram, ROI paths |
+
+Customer `laps.csv` after Confirm is the GT-accurate display sequence for that
+session (not the accuracy corpus). Scoring always prefers `laps_written.csv`.
 
 ### ROI tee density (per hold)
 
