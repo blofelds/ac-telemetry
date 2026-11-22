@@ -284,9 +284,9 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
     }
 
     function sessionLabel(s, id) {
-      // UI-only title prefix; API/CSV session fields stay unchanged.
-      // Keep PR #44 GT-confirmed suffix on the accuracy picker option.
-      let label = formatSessionTitle(s);
+      // Accuracy picker A: track · car · DD/MM HH:MM · hash4 [· GT confirmed].
+      // Hash sits between the short stamp and the confirmed suffix.
+      let label = formatAccuracySessionTitle(s);
       if (confirmedBySid[id] && confirmedBySid[id].gt_confirmed) {
         label += " · GT confirmed";
       }
