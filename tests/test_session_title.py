@@ -1,4 +1,4 @@
-"""UI-only session title formats for phone History and Accuracy picker A."""
+"""UI-only session title formats for phone History, dossier/current B, Accuracy A."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from ac_telemetry.web.session_title import (
     DISPLAY_TIMEZONE,
     SESSION_TITLE_JS,
     format_accuracy_session_title,
+    format_session_hash4,
+    format_session_identity,
     format_session_stamp,
     format_session_stamp_short,
     format_session_title,
@@ -20,6 +22,24 @@ def test_display_timezone_is_europe_london() -> None:
     assert "Europe/London" in SESSION_TITLE_JS
     assert "function formatSessionTitle" in SESSION_TITLE_JS
     assert "function formatAccuracySessionTitle" in SESSION_TITLE_JS
+    assert "function formatSessionIdentity" in SESSION_TITLE_JS
+    assert "function sessionStamp" in SESSION_TITLE_JS
+    assert "function sessionHash4" in SESSION_TITLE_JS
+
+
+def test_format_session_identity_track_car() -> None:
+    assert (
+        format_session_identity(
+            {
+                "session_id": "a3f9c812dead",
+                "car": "Abarth",
+                "track": "Vallelunga Club",
+            }
+        )
+        == "Vallelunga Club · Abarth"
+    )
+    assert format_session_hash4({"session_id": "a3f9c812dead"}) == "a3f9"
+    assert format_session_identity({}) == "— · —"
 
 
 def test_format_session_title_example_bst() -> None:
@@ -124,9 +144,42 @@ def test_phone_history_and_accuracy_picker_call_formatter() -> None:
     assert "let label = formatAccuracySessionTitle(s);" in ACCURACY_HELPER_HTML
     # Accuracy picker A owns option text; do not fall back to phone History title.
     assert "let label = formatSessionTitle(s);" not in ACCURACY_HELPER_HTML
-    # Old label shapes should no longer drive the title/option text.
-    assert '(s.track || "—") + " · " + (s.car || "—")' not in STATUS_HTML
     assert "[track, car].filter(Boolean).join" not in ACCURACY_HELPER_HTML
+    # Dossier B + Current B use brief track · car identity + LIVE badge.
+    assert "formatSessionIdentity(session)" in STATUS_HTML
+    assert 'class=\\"badge run\\">LIVE</span>' in STATUS_HTML
+    assert "No session running." in STATUS_HTML
+
+
+def test_current_strip_uses_brief_identity() -> None:
+    from ac_telemetry.web import STATUS_HTML
+
+    current_fn = STATUS_HTML.split("function renderCurrent(session)", 1)[1].split(
+        "function prefillFromLastSession", 1
+    )[0]
+    assert "formatSessionIdentity(session)" in current_fn
+    assert "sessionStamp(session)" in current_fn
+    assert "sessionHash4(session)" in current_fn
+    assert "LIVE" in current_fn
+    assert "session.session_id +" not in current_fn
+    assert "<strong>Running</strong>" not in current_fn
+
+
+def test_dossier_header_uses_brief_identity() -> None:
+    from ac_telemetry.web import STATUS_HTML
+
+    dossier_fn = STATUS_HTML.split("function renderDossier(payload)", 1)[1].split(
+        "async function loadDossier", 1
+    )[0]
+    assert "formatSessionIdentity(session)" in dossier_fn
+    assert "sessionStamp(session)" in dossier_fn
+    assert "sessionHash4(session)" in dossier_fn
+    assert "GT confirmed" in dossier_fn
+    assert "formatSessionTitle(session)" not in dossier_fn
+    assert 'id="dossier-gt"' not in STATUS_HTML
+    assert "session.started_at" not in dossier_fn
+    assert "session.ended_at" not in dossier_fn
+    assert '"id " +' not in dossier_fn
 
 
 def test_api_session_list_fields_unchanged(tmp_path: Path) -> None:

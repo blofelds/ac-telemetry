@@ -1,7 +1,10 @@
 """UI-only session title formatting.
 
-Phone history / dossier use ``format_session_title``:
+Phone history uses ``format_session_title``:
 ``DD/MM/YY HH:MM <hash4> <car> - <track>`` in Europe/London.
+
+Dossier / current-strip (header mockups B) use ``format_session_identity``:
+``track · car``, with stamp + hash4 on a muted meta line.
 
 Accuracy picker (mockup A + short hash) uses ``format_accuracy_session_title``:
 ``<track> · <car> · DD/MM HH:MM · <hash4>`` — GT suffix is applied by the
@@ -80,6 +83,21 @@ function formatSessionStampShort(startedAt) {
   return _formatStampParts(startedAt, { withYear: false });
 }
 
+// Dossier B / Current B call sites pass the session object.
+function sessionHash4(session) {
+  return _sessionIdHash4(session);
+}
+
+function sessionStamp(session) {
+  const s = session || {};
+  return formatSessionStamp(s.started_at);
+}
+
+function formatSessionIdentity(session) {
+  const { car, track } = _sessionParts(session);
+  return track + " \u00b7 " + car;
+}
+
 function formatSessionTitle(session) {
   const s = session || {};
   const { hash4, car, track } = _sessionParts(s);
@@ -142,8 +160,20 @@ def format_session_stamp_short(started_at: Any) -> str:
     return local.strftime("%d/%m %H:%M")
 
 
+def format_session_hash4(session: Mapping[str, Any] | None) -> str:
+    """First four characters of session id, or ``----`` when missing."""
+    hash4, _, _ = _session_fields(session)
+    return hash4
+
+
+def format_session_identity(session: Mapping[str, Any] | None) -> str:
+    """Brief dossier / current-strip title: ``track · car``."""
+    _, car, track = _session_fields(session)
+    return f"{track} · {car}"
+
+
 def format_session_title(session: Mapping[str, Any] | None) -> str:
-    """Build the phone History / dossier session title.
+    """Build the phone History session title.
 
     Example: ``27/10/26 14:05 a3f9 Audi R8 LMS - Brands Hatch``.
     """

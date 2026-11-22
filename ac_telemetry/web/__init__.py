@@ -110,7 +110,8 @@ _STATUS_HTML = """<!DOCTYPE html>
       border-top: 1px solid var(--line);
       font-size: 0.92rem;
     }
-    .current strong { color: var(--ok); }
+    .current .meta { color: var(--muted); font-size: 0.78rem; margin-top: 0.25rem; }
+    .current .badge { margin-left: 0.35rem; }
     .grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -221,13 +222,12 @@ _STATUS_HTML = """<!DOCTYPE html>
       font-weight: 600; font-size: 0.95rem; cursor: pointer;
     }
     .dossier-title {
-      font-size: 1.15rem; font-weight: 600; margin: 0.5rem 0 0.35rem;
+      font-size: 1.15rem; font-weight: 600; margin: 0.5rem 0 0.25rem;
+      line-height: 1.35;
     }
-    .dossier-gt { margin: 0 0 0.45rem; }
-    .dossier-gt .badge { margin-left: 0; }
+    .dossier-title .badge { margin-left: 0.35rem; }
     .dossier-meta {
       color: var(--muted); font-size: 0.88rem; margin: 0 0 0.85rem;
-      white-space: pre-wrap;
     }
     .dossier-notes {
       background: var(--panel); border: 1px solid var(--line);
@@ -359,7 +359,6 @@ _STATUS_HTML = """<!DOCTYPE html>
   <div id="dossier-view" aria-live="polite">
     <button type="button" class="btn-back" id="dossier-back">← History</button>
     <div class="dossier-title" id="dossier-title">Session</div>
-    <p class="dossier-gt is-hidden" id="dossier-gt"><span class="badge gt">GT confirmed</span></p>
     <p class="dossier-meta" id="dossier-meta"></p>
     <div class="dossier-notes empty" id="dossier-notes">No notes.</div>
     <div class="grid" style="margin-bottom:0.75rem">
@@ -459,12 +458,15 @@ _STATUS_HTML = """<!DOCTYPE html>
       }
       const prevId = currentId;
       currentId = session.session_id;
+      // Current strip B: track · car + LIVE; muted stamp · hash4.
       $("current").innerHTML =
-        "<strong>Running</strong> · " +
-        (session.track || "(no track)") + " · " +
-        (session.car || "(no car)") +
-        "<br><span style=\\"color:var(--muted)\\">id " + session.session_id +
-        " · started " + (session.started_at || "—") + "</span>";
+        escapeHtml(formatSessionIdentity(session)) +
+        " <span class=\\"badge run\\">LIVE</span>" +
+        "<div class=\\"meta\\">started " +
+        escapeHtml(sessionStamp(session)) +
+        " · " +
+        escapeHtml(sessionHash4(session)) +
+        "</div>";
       $("btn-start").disabled = true;
       $("btn-end").disabled = false;
       if (!$("track").value) $("track").value = session.track || "";
@@ -565,21 +567,18 @@ _STATUS_HTML = """<!DOCTYPE html>
     function renderDossier(payload) {
       const session = (payload && payload.session) || {};
       const summary = (payload && payload.summary) || {};
-      $("dossier-title").textContent = formatSessionTitle(session);
-      const gtEl = $("dossier-gt");
-      if (summary.gt_confirmed) {
-        gtEl.classList.remove("is-hidden");
-      } else {
-        gtEl.classList.add("is-hidden");
-      }
-      const lines = [
-        (session.track || "(no track)") + " · " + (session.car || "(no car)"),
+      // Dossier B: track · car (+ GT badge); muted stamp · status · hash4.
+      const gtBadge = summary.gt_confirmed
+        ? " <span class=\\"badge gt\\">GT confirmed</span>"
+        : "";
+      $("dossier-title").innerHTML =
+        escapeHtml(formatSessionIdentity(session)) + gtBadge;
+      $("dossier-meta").textContent =
+        sessionStamp(session) +
+        " · " +
         (session.status || "—") +
-          (session.started_at ? " · started " + session.started_at : "") +
-          (session.ended_at ? " → " + session.ended_at : ""),
-        "id " + (session.session_id || "—"),
-      ];
-      $("dossier-meta").textContent = lines.join("\\n");
+        " · " +
+        sessionHash4(session);
       const notes = (session.notes || "").trim();
       const notesEl = $("dossier-notes");
       if (notes) {

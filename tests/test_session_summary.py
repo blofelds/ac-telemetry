@@ -206,12 +206,20 @@ def test_status_html_dossier_markers() -> None:
     assert 'id="dossier-pace-10"' in STATUS_HTML
     assert "5-lap pace" in STATUS_HTML
     assert "10-lap pace" in STATUS_HTML
-    assert 'id="dossier-gt"' in STATUS_HTML
     assert "GT confirmed" in STATUS_HTML
     assert "badge gt" in STATUS_HTML
+    assert "formatSessionIdentity(session)" in STATUS_HTML
+    assert "sessionStamp(session)" in STATUS_HTML
+    assert "sessionHash4(session)" in STATUS_HTML
+    assert 'id="dossier-gt"' not in STATUS_HTML
     assert 'id="dossier-avg"' not in STATUS_HTML
     assert 'id="dossier-spread"' not in STATUS_HTML
     # Concept 1 stint scroll (#51) stays on the home view; dossier is history-only.
     assert 'id="stint"' in STATUS_HTML
     assert "refreshStint" in STATUS_HTML
     assert 'id="live-lap-list"' not in STATUS_HTML
+    # Stint C: section heading only — no session title on the stint surface.
+    assert "<h2>Stint</h2>" in STATUS_HTML
+    stint_block = STATUS_HTML.split("<h2>Stint</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "formatSessionIdentity" not in stint_block
+    assert "formatSessionTitle" not in stint_block
