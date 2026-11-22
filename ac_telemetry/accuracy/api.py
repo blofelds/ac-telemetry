@@ -42,7 +42,7 @@ class GtSubmitBody(BaseModel):
 
 
 class GtConfirmBody(BaseModel):
-    """Helper Confirm — GT draft + gt.json + stint CSV note/times."""
+    """Helper Confirm — GT artefacts + freeze OCR + rewrite customer CSV."""
 
     laps: list[Any] = Field(
         ...,
@@ -50,12 +50,12 @@ class GtConfirmBody(BaseModel):
     )
     score: bool = Field(
         default=True,
-        description="If true, compute write%/ocr-sample% after confirm.",
+        description="If true, score vs frozen laps_written.csv after confirm.",
     )
     note: str = Field(
         default=GT_CONFIRMED_NOTE,
         max_length=200,
-        description="Note written onto every laps.csv row for this session.",
+        description="Note written onto every customer laps.csv row for this session.",
     )
 
 
@@ -177,7 +177,7 @@ def mount_accuracy_routes(
     def api_accuracy_gt_confirm(
         session_id: str, body: GtConfirmBody
     ) -> dict[str, Any]:
-        """Confirm helper edits: gt_draft.json + gt.json + laps.csv note/times."""
+        """Confirm: gt files, freeze laps_written once, rewrite customer CSV."""
         _sid_or_404(session_id)
         try:
             return confirm_helper_gt(
