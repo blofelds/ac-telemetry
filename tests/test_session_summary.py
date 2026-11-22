@@ -183,6 +183,7 @@ def test_api_session_summary_endpoint(tmp_path: Path) -> None:
     assert body["summary"]["best_lap_time"] == "1:41.780"
     assert body["summary"]["pace_5_ms"] is None
     assert body["summary"]["pace_10_ms"] is None
+    assert body["summary"]["gt_confirmed"] is False
     assert len(body["summary"]["laps"]) == 2
 
     missing = client.get("/api/sessions/does-not-exist/summary")
@@ -205,6 +206,9 @@ def test_status_html_dossier_markers() -> None:
     assert 'id="dossier-pace-10"' in STATUS_HTML
     assert "5-lap pace" in STATUS_HTML
     assert "10-lap pace" in STATUS_HTML
+    assert 'id="dossier-gt"' in STATUS_HTML
+    assert "GT confirmed" in STATUS_HTML
+    assert "badge gt" in STATUS_HTML
     assert 'id="dossier-avg"' not in STATUS_HTML
     assert 'id="dossier-spread"' not in STATUS_HTML
     # Concept 1 stint scroll (#51) stays on the home view; dossier is history-only.

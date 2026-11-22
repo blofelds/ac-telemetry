@@ -15,6 +15,7 @@ not only mismatches. Mismatches are flagged visually in Markdown.
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 from collections import Counter
@@ -25,6 +26,7 @@ from typing import Any
 from ac_telemetry.accuracy.ocr_log import OcrSampleLog
 from ac_telemetry.accuracy.paths import (
     gt_path,
+    laps_written_path,
     ocr_samples_path,
     review_md_path,
     roi_manifest_path,
@@ -168,6 +170,39 @@ def prefills_from_csv(laps: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return draft
+
+
+def load_laps_written(
+    session_dir_path: Path,
+) -> list[dict[str, Any]] | None:
+    """Load frozen OCR-as-written rows (newest-first), or None if missing."""
+    path = laps_written_path(session_dir_path)
+    if not path.is_file():
+        return None
+    with path.open(encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    rows.reverse()
+    return rows
+
+
+def scoring_csv_laps(
+    *,
+    data_dir: Path,
+    session_id: str,
+    subdir: str = "accuracy",
+    lap_store: LapStore | None = None,
+) -> tuple[list[dict[str, Any]], str]:
+    """CSV rows used for write% — prefer frozen ``laps_written.csv``.
+
+    Returns ``(newest_first_rows, source_label)`` where source_label is
+    ``laps_written.csv`` or ``laps.csv``.
+    """
+    sdir = session_dir(data_dir, session_id, subdir=subdir)
+    written = load_laps_written(sdir)
+    if written is not None:
+        return written, "laps_written.csv"
+    store = lap_store or LapStore(data_dir)
+    return store.list_laps(session_id=session_id, limit=500), "laps.csv"
 
 
 def scoring_gt_laps(gt_laps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -408,8 +443,12 @@ def score_session(
     sdir = session_dir(data_dir, session_id, subdir=subdir)
     sdir.mkdir(parents=True, exist_ok=True)
 
-    store = lap_store or LapStore(data_dir)
-    csv_laps = store.list_laps(session_id=session_id, limit=500)
+    csv_laps, csv_source = scoring_csv_laps(
+        data_dir=data_dir,
+        session_id=session_id,
+        subdir=subdir,
+        lap_store=lap_store,
+    )
     samples = OcrSampleLog.read_all(ocr_samples_path(sdir))
     manifest = _load_manifest(roi_manifest_path(sdir))
 
@@ -555,6 +594,7 @@ def score_session(
             1 for g in gt_laps if normalize_mark(g.get("mark")) == MARK_SKIP
         ),
         "csv_laps": len(csv_laps),
+        "csv_source": csv_source,
         "write_matches": match_n,
         "write_misses": len(misses),
         "write_extras": len(extras),

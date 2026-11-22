@@ -169,6 +169,7 @@ _STATUS_HTML = """<!DOCTYPE html>
     }
     .badge.run { background: #1e3d2e; color: var(--ok); }
     .badge.stop { background: #2a3038; color: var(--muted); }
+    .badge.gt { background: #1e3d2e; color: var(--ok); }
     .stint {
       list-style: none;
       margin: 0.75rem 0 0;
@@ -222,6 +223,8 @@ _STATUS_HTML = """<!DOCTYPE html>
     .dossier-title {
       font-size: 1.15rem; font-weight: 600; margin: 0.5rem 0 0.35rem;
     }
+    .dossier-gt { margin: 0 0 0.45rem; }
+    .dossier-gt .badge { margin-left: 0; }
     .dossier-meta {
       color: var(--muted); font-size: 0.88rem; margin: 0 0 0.85rem;
       white-space: pre-wrap;
@@ -356,6 +359,7 @@ _STATUS_HTML = """<!DOCTYPE html>
   <div id="dossier-view" aria-live="polite">
     <button type="button" class="btn-back" id="dossier-back">← History</button>
     <div class="dossier-title" id="dossier-title">Session</div>
+    <p class="dossier-gt is-hidden" id="dossier-gt"><span class="badge gt">GT confirmed</span></p>
     <p class="dossier-meta" id="dossier-meta"></p>
     <div class="dossier-notes empty" id="dossier-notes">No notes.</div>
     <div class="grid" style="margin-bottom:0.75rem">
@@ -487,6 +491,9 @@ _STATUS_HTML = """<!DOCTYPE html>
         const badge = s.status === "running"
           ? "<span class=\\"badge run\\">running</span>"
           : "<span class=\\"badge stop\\">stopped</span>";
+        const gtBadge = s.gt_confirmed
+          ? "<span class=\\"badge gt\\">GT confirmed</span>"
+          : "";
         // UI-only label; API/CSV session fields stay unchanged.
         const title = formatSessionTitle(s);
         const meta = (s.started_at || "") +
@@ -498,7 +505,7 @@ _STATUS_HTML = """<!DOCTYPE html>
         const sid = escapeHtml(s.session_id || "");
         return "<li class=\\"tap\\" role=\\"button\\" tabindex=\\"0\\" data-session-id=\\"" +
           sid + "\\"><span class=\\"chev\\" aria-hidden=\\"true\\">›</span><div>" +
-          escapeHtml(title) + badge + "</div>" +
+          escapeHtml(title) + badge + gtBadge + "</div>" +
           "<div class=\\"meta\\">" + escapeHtml(meta) + "</div>" + notes + "</li>";
       }).join("");
     }
@@ -559,6 +566,12 @@ _STATUS_HTML = """<!DOCTYPE html>
       const session = (payload && payload.session) || {};
       const summary = (payload && payload.summary) || {};
       $("dossier-title").textContent = formatSessionTitle(session);
+      const gtEl = $("dossier-gt");
+      if (summary.gt_confirmed) {
+        gtEl.classList.remove("is-hidden");
+      } else {
+        gtEl.classList.add("is-hidden");
+      }
       const lines = [
         (session.track || "(no track)") + " · " + (session.car || "(no car)"),
         (session.status || "—") +

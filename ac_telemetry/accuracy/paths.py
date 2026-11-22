@@ -32,6 +32,11 @@ def gt_draft_path(session_dir_path: Path) -> Path:
     return session_dir_path / "gt_draft.json"
 
 
+def laps_written_path(session_dir_path: Path) -> Path:
+    """Frozen OCR-as-written CSV for this session (never overwritten on re-Confirm)."""
+    return session_dir_path / "laps_written.csv"
+
+
 def score_json_path(session_dir_path: Path) -> Path:
     return session_dir_path / "score.json"
 

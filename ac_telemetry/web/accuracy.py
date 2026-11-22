@@ -560,7 +560,8 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
           " · skips " + (body.gt_skips || sc.gt_skips || 0) +
           " · misses " + (sc.write_misses != null ? sc.write_misses : "?") +
           " · extras " + (sc.write_extras != null ? sc.write_extras : "?") +
-          " · note on " + (body.csv_laps_updated || 0) + " CSV laps",
+          " · customer CSV " + (body.csv_laps_updated || 0) + " GT laps" +
+          (body.laps_written_frozen ? " · froze laps_written.csv" : ""),
           "ok"
         );
       } finally {

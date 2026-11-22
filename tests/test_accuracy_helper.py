@@ -14,7 +14,13 @@ from ac_telemetry.accuracy.helper import (
     resolve_roi_file,
     select_display_crops,
 )
-from ac_telemetry.accuracy.paths import gt_draft_path, gt_path, session_dir
+from ac_telemetry.accuracy.paths import (
+    gt_draft_path,
+    gt_path,
+    laps_written_path,
+    session_dir,
+)
+from ac_telemetry.accuracy.score import load_laps_written
 from ac_telemetry.api import create_app
 from ac_telemetry.capture import CaptureService
 from ac_telemetry.settings import load_settings
@@ -353,21 +359,31 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
     assert payload["ok"] is True
     assert payload["csv_laps_updated"] == 2
     assert payload["csv_note"] == GT_CONFIRMED_NOTE
-    assert payload["score"]["write_pct"] == 100.0
+    assert payload["laps_written_frozen"] is True
+    # write% vs frozen OCR: lap1 corrected (miss) + lap2 exact (match) → 50%.
+    assert payload["score"]["write_pct"] == 50.0
+    assert payload["score"]["write_matches"] == 1
+    assert payload["score"]["csv_source"] == "laps_written.csv"
 
     draft = gt_draft_path(sdir)
     gt = gt_path(sdir)
+    written = laps_written_path(sdir)
     assert draft.is_file()
     assert gt.is_file()
+    assert written.is_file()
     draft_data = json.loads(draft.read_text(encoding="utf-8"))
     assert draft_data["laps"][0]["lap_time"] == "1:07.800"
     assert draft_data["laps"][0]["mark"] == "normal"
 
+    # Customer CSV is GT times; frozen written keeps OCR-as-written strings.
     chrono = list(reversed(lap_store.list_laps(session_id=sid, limit=10)))
     assert all(r["note"] == GT_CONFIRMED_NOTE for r in chrono)
     assert chrono[0]["lap_time"] == "1:07.800"
     assert chrono[0]["lap_time_ms"] == "67800"
     assert chrono[1]["lap_time"] == "1:08.200"
+    frozen = list(reversed(load_laps_written(sdir) or []))
+    assert frozen[0]["lap_time"] == "1:07.717"
+    assert frozen[1]["lap_time"] == "1:08.200"
 
     after = detect_gt_confirmed(
         data_dir=data_dir, session_id=sid, lap_store=lap_store, subdir="accuracy"
@@ -385,6 +401,15 @@ def test_helper_page_and_confirm(tmp_path: Path) -> None:
     status_after = client.get(f"/api/accuracy/sessions/gt-status?session_id={sid}")
     assert status_after.status_code == 200
     assert status_after.json()["sessions"][sid]["gt_confirmed"] is True
+
+    # Phone History / dossier expose the GT confirmed flag from customer CSV notes.
+    sessions = client.get("/api/sessions?limit=20")
+    assert sessions.status_code == 200
+    row = next(s for s in sessions.json()["sessions"] if s["session_id"] == sid)
+    assert row["gt_confirmed"] is True
+    summary = client.get(f"/api/sessions/{sid}/summary")
+    assert summary.status_code == 200
+    assert summary.json()["summary"]["gt_confirmed"] is True
 
 
 def test_helper_confirm_persists_double_and_skip(tmp_path: Path) -> None:
@@ -479,6 +504,7 @@ def test_helper_confirm_persists_double_and_skip(tmp_path: Path) -> None:
     assert payload["score"]["write_misses"] == 1
     assert payload["score"]["write_extras"] == 0
     assert payload["score"]["write_doubles"] == 1
+    assert payload["score"]["csv_source"] == "laps_written.csv"
     # 2 matches / 3 scoring GT (2 normal + 1 skip)
     assert payload["score"]["write_pct"] == round(100.0 * 2 / 3, 2)
 
@@ -500,7 +526,26 @@ def test_helper_confirm_persists_double_and_skip(tmp_path: Path) -> None:
     assert draft["laps"][1]["csv_lap_number"] == 2
     assert "csv_lap_number" not in draft["laps"][2]
 
-    # Re-load helper: marks + skip row restored from draft.
+    # Customer CSV: contiguous GT (drop double, insert skip); written keeps 3 OCR rows.
+    customer = list(reversed(lap_store.list_laps(session_id=sid, limit=10)))
+    assert [r["lap_number"] for r in customer] == ["1", "2", "3"]
+    assert [r["lap_time"] for r in customer] == [
+        "1:07.717",
+        "1:07.900",
+        "1:08.200",
+    ]
+    assert customer[1]["recorded_at"] == ""
+    assert customer[1]["source"] == "gt_skip"
+    assert all(r["note"] == GT_CONFIRMED_NOTE for r in customer)
+    frozen = list(reversed(load_laps_written(sdir) or []))
+    assert len(frozen) == 3
+    assert [r["lap_time"] for r in frozen] == [
+        "1:07.717",
+        "1:07.727",
+        "1:08.200",
+    ]
+
+    # Re-load helper: marks + skip row restored from draft vs frozen OCR.
     helper2 = client.get(f"/api/accuracy/sessions/{sid}/helper")
     assert helper2.status_code == 200
     marks = [lap["mark"] for lap in helper2.json()["laps"]]
@@ -636,3 +681,175 @@ def test_insert_skip_confirm_payload_order_and_blank_time(
     assert draft["laps"][1]["lap_time"] == "1:07.900"
     assert draft["laps"][0]["csv_lap_number"] == 1
     assert draft["laps"][2]["csv_lap_number"] == 2
+
+
+def test_confirm_freezes_written_once_and_rewrites_customer(tmp_path: Path) -> None:
+    """First Confirm freezes OCR; re-Confirm rewrites customer, never re-freezes."""
+    client, store, lap_store, data_dir = _enabled_client(tmp_path)
+    created = client.post(
+        "/api/sessions", json={"track": "Monza", "car": "Test", "notes": ""}
+    )
+    assert created.status_code == 201
+    sid = created.json()["session"]["session_id"]
+    client.post("/api/sessions/current/end")
+
+    # Other session must stay untouched.
+    other = store.start_session(track="Spa", car="Test", notes="")
+    other_sid = other["session_id"]
+    store.end_session(other_sid)
+    lap_store.append_lap(
+        {
+            "session_id": other_sid,
+            "lap_number": 1,
+            "lap_time": "2:00.000",
+            "lap_time_ms": 120_000,
+            "source": "mock",
+            "raw_text": "2:00.000",
+            "recorded_at": "2026-01-01T00:00:00+00:00",
+        }
+    )
+
+    for n, t, ms in (
+        (1, "1:07.717", 67_717),
+        (2, "1:07.727", 67_727),
+        (3, "1:08.200", 68_200),
+    ):
+        lap_store.append_lap(
+            {
+                "session_id": sid,
+                "lap_number": n,
+                "lap_time": t,
+                "lap_time_ms": ms,
+                "source": "mock",
+                "raw_text": t,
+                "recorded_at": f"2026-01-01T12:0{n}:00+00:00",
+            }
+        )
+
+    first = client.post(
+        f"/api/accuracy/sessions/{sid}/gt/confirm",
+        json={
+            "laps": [
+                {"lap_time": "1:07.800", "csv_lap_number": 1, "mark": "normal"},
+                {"lap_time": "1:07.727", "csv_lap_number": 2, "mark": "double"},
+                {"lap_time": "1:07.900", "mark": "skip"},
+                {"lap_time": "1:08.200", "csv_lap_number": 3, "mark": "normal"},
+            ],
+            "score": True,
+        },
+    )
+    assert first.status_code == 200, first.text
+    body1 = first.json()
+    assert body1["laps_written_frozen"] is True
+    assert body1["score"]["csv_source"] == "laps_written.csv"
+    # Score against OCR-as-written (includes double + miss for skip).
+    assert body1["score"]["write_matches"] == 1  # only lap3 exact; lap1 time corrected in GT
+    assert body1["score"]["write_misses"] == 2  # corrected normal miss + skip
+    assert body1["score"]["write_doubles"] == 1
+
+    sdir = session_dir(data_dir, sid, subdir="accuracy")
+    written_text = laps_written_path(sdir).read_text(encoding="utf-8")
+    customer = list(reversed(lap_store.list_laps(session_id=sid, limit=10)))
+    assert [r["lap_number"] for r in customer] == ["1", "2", "3"]
+    assert customer[0]["lap_time"] == "1:07.800"
+    assert customer[1]["lap_time"] == "1:07.900"
+    assert customer[1]["recorded_at"] == ""
+    assert customer[2]["lap_time"] == "1:08.200"
+
+    other_rows = lap_store.list_laps(session_id=other_sid, limit=5)
+    assert len(other_rows) == 1
+    assert other_rows[0]["lap_time"] == "2:00.000"
+    assert other_rows[0].get("note", "") == ""
+
+    # Re-Confirm with a different GT rewrite; freeze must not change.
+    second = client.post(
+        f"/api/accuracy/sessions/{sid}/gt/confirm",
+        json={
+            "laps": [
+                {"lap_time": "1:07.717", "csv_lap_number": 1, "mark": "normal"},
+                {"lap_time": "1:07.727", "csv_lap_number": 2, "mark": "double"},
+                {"lap_time": "1:07.950", "mark": "skip"},
+                {"lap_time": "1:08.200", "csv_lap_number": 3, "mark": "normal"},
+            ],
+            "score": True,
+        },
+    )
+    assert second.status_code == 200, second.text
+    body2 = second.json()
+    assert body2["laps_written_frozen"] is False
+    assert laps_written_path(sdir).read_text(encoding="utf-8") == written_text
+    assert body2["score"]["csv_source"] == "laps_written.csv"
+    # Against frozen OCR: lap1 + lap3 match; skip miss; double annotated.
+    assert body2["score"]["write_matches"] == 2
+    assert body2["score"]["write_misses"] == 1
+    assert body2["score"]["write_pct"] == round(100.0 * 2 / 3, 2)
+
+    customer2 = list(reversed(lap_store.list_laps(session_id=sid, limit=10)))
+    assert [r["lap_time"] for r in customer2] == [
+        "1:07.717",
+        "1:07.950",
+        "1:08.200",
+    ]
+    # Pace/best follow customer GT CSV (skip counts as a timed lap).
+    summary = client.get(f"/api/sessions/{sid}/summary").json()["summary"]
+    assert summary["gt_confirmed"] is True
+    assert summary["lap_count"] == 3
+    assert summary["best_lap_time"] == "1:07.717"
+
+
+def test_score_never_uses_doctored_customer_csv(tmp_path: Path) -> None:
+    """write% stays against laps_written even if customer CSV looks perfect."""
+    from ac_telemetry.accuracy.score import score_session
+    from ac_telemetry.accuracy.helper import freeze_laps_written_once, build_gt_customer_rows
+    from ac_telemetry.accuracy.score import load_gt_list
+
+    data_dir = tmp_path / "sessions"
+    lap_store = LapStore(data_dir)
+    lap_store.ensure()
+    sid = "scorevs1"
+    for n, t, ms in (
+        (1, "1:00.000", 60_000),
+        (2, "1:00.010", 60_010),  # double
+        (3, "1:01.000", 61_000),
+    ):
+        lap_store.append_lap(
+            {
+                "session_id": sid,
+                "lap_number": n,
+                "lap_time": t,
+                "lap_time_ms": ms,
+                "source": "mock",
+                "raw_text": t,
+                "recorded_at": f"2026-10-11T12:0{n}:00+00:00",
+            }
+        )
+    freeze_laps_written_once(
+        data_dir=data_dir, session_id=sid, lap_store=lap_store, subdir="accuracy"
+    )
+    gt = load_gt_list(
+        [
+            {"lap_time": "1:00.000", "mark": "normal", "csv_lap_number": 1},
+            {"lap_time": "1:00.010", "mark": "double", "csv_lap_number": 2},
+            {"lap_time": "1:00.500", "mark": "skip"},
+            {"lap_time": "1:01.000", "mark": "normal", "csv_lap_number": 3},
+        ]
+    )
+    # Doctor customer CSV to the perfect GT sequence (would fake 100% if scored).
+    ocr = list(reversed(lap_store.list_laps(session_id=sid, limit=10)))
+    # After freeze, replace customer with GT rows.
+    rows = build_gt_customer_rows(
+        session_id=sid, gt_laps=gt, ocr_chrono=ocr, note=GT_CONFIRMED_NOTE
+    )
+    lap_store.replace_session_laps(sid, rows)
+    customer = list(reversed(lap_store.list_laps(session_id=sid, limit=10)))
+    assert len(customer) == 3  # double dropped, skip inserted
+
+    report = score_session(
+        data_dir=data_dir, session_id=sid, gt_laps=gt, lap_store=lap_store
+    )
+    assert report["csv_source"] == "laps_written.csv"
+    assert report["csv_laps"] == 3  # frozen OCR row count
+    assert report["write_matches"] == 2
+    assert report["write_misses"] == 1
+    assert report["write_doubles"] == 1
+    assert report["write_pct"] == round(100.0 * 2 / 3, 2)
