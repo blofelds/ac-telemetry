@@ -1,4 +1,4 @@
-"""UI-only session title formats for phone History, dossier/current B, Accuracy A."""
+"""UI-only session title formats: History A, dossier/current B, Accuracy A."""
 
 from __future__ import annotations
 
@@ -23,23 +23,10 @@ def test_display_timezone_is_europe_london() -> None:
     assert "function formatSessionTitle" in SESSION_TITLE_JS
     assert "function formatAccuracySessionTitle" in SESSION_TITLE_JS
     assert "function formatSessionIdentity" in SESSION_TITLE_JS
+    assert "function formatSessionStampShort" in SESSION_TITLE_JS
+    assert "function formatSessionHash4" in SESSION_TITLE_JS
     assert "function sessionStamp" in SESSION_TITLE_JS
     assert "function sessionHash4" in SESSION_TITLE_JS
-
-
-def test_format_session_identity_track_car() -> None:
-    assert (
-        format_session_identity(
-            {
-                "session_id": "a3f9c812dead",
-                "car": "Abarth",
-                "track": "Vallelunga Club",
-            }
-        )
-        == "Vallelunga Club · Abarth"
-    )
-    assert format_session_hash4({"session_id": "a3f9c812dead"}) == "a3f9"
-    assert format_session_identity({}) == "— · —"
 
 
 def test_format_session_title_example_bst() -> None:
@@ -83,6 +70,32 @@ def test_format_session_title_accepts_zulu_and_id_alias() -> None:
 def test_format_session_title_missing_fields_keep_shape() -> None:
     title = format_session_title({"session_id": "xy"})
     assert title == f"--/--/-- --:-- xy — - —"
+
+
+def test_format_session_identity_track_car() -> None:
+    assert (
+        format_session_identity(
+            {"track": "Vallelunga Club", "car": "Abarth", "session_id": "a3f9"}
+        )
+        == "Vallelunga Club · Abarth"
+    )
+    assert format_session_hash4({"session_id": "a3f9c812dead"}) == "a3f9"
+
+
+def test_format_session_identity_missing_parts() -> None:
+    assert format_session_identity({}) == "— · —"
+    assert format_session_identity({"track": "Monza"}) == "Monza · —"
+
+
+def test_format_session_stamp_short_and_hash4() -> None:
+    session = {
+        "session_id": "a3f9c2e1b8d04f11",
+        "started_at": "2026-11-22T14:05:00+00:00",
+    }
+    assert format_session_stamp_short(session["started_at"]) == "22/11 14:05"
+    assert format_session_hash4(session) == "a3f9"
+    assert format_session_stamp_short(None) == "--/-- --:--"
+    assert format_session_hash4({}) == "----"
 
 
 def test_format_session_stamp_naive_iso_treated_as_utc() -> None:
@@ -131,16 +144,32 @@ def test_shared_js_helper_embedded_in_phone_and_accuracy_ui() -> None:
     for html in (STATUS_HTML, ACCURACY_HELPER_HTML):
         assert "formatSessionTitle" in html
         assert "formatAccuracySessionTitle" in html
+        assert "formatSessionIdentity" in html
         assert "Europe/London" in html
         # Placeholder must be expanded; raw marker must not leak into pages.
         assert "/*__SESSION_TITLE_JS__*/" not in html
 
 
-def test_phone_history_and_accuracy_picker_call_formatter() -> None:
+def test_phone_history_uses_layout_a_helpers() -> None:
+    from ac_telemetry.web import STATUS_HTML
+
+    history_fn = STATUS_HTML.split("function renderHistory(sessions)", 1)[1].split(
+        "function escapeHtml", 1
+    )[0]
+    # History A: track · car title, demoted stamp/hash, live-only status cue.
+    assert "formatSessionIdentity(s)" in history_fn
+    assert "formatSessionStampShort(s.started_at)" in history_fn
+    assert "formatSessionHash4(s)" in history_fn
+    assert 'badge run\\">live' in history_fn
+    assert 'badge stop\\">stopped' not in history_fn
+    assert 'badge gt\\">GT</span>' in history_fn
+    assert "formatSessionTitle(s)" not in history_fn
+
+
+def test_accuracy_picker_uses_accuracy_a_formatter() -> None:
     from ac_telemetry.web import STATUS_HTML
     from ac_telemetry.web.accuracy import ACCURACY_HELPER_HTML
 
-    assert "formatSessionTitle(s)" in STATUS_HTML
     assert "let label = formatAccuracySessionTitle(s);" in ACCURACY_HELPER_HTML
     # Accuracy picker A owns option text; do not fall back to phone History title.
     assert "let label = formatSessionTitle(s);" not in ACCURACY_HELPER_HTML
@@ -183,7 +212,7 @@ def test_dossier_header_uses_brief_identity() -> None:
 
 
 def test_api_session_list_fields_unchanged(tmp_path: Path) -> None:
-    """Prefix is display-only — JSON still exposes raw session fields."""
+    """Title layout is display-only — JSON still exposes raw session fields."""
     from fastapi.testclient import TestClient
 
     from ac_telemetry.api import create_app

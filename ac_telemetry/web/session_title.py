@@ -1,10 +1,11 @@
 """UI-only session title formatting.
 
-Phone history uses ``format_session_title``:
-``DD/MM/YY HH:MM <hash4> <car> - <track>`` in Europe/London.
+Phone History layout A, dossier header B, and current-strip B share
+``format_session_identity`` (``track · car``), with stamp/hash demoted to a
+muted meta line. History shows a compact live cue only while running.
 
-Dossier / current-strip (header mockups B) use ``format_session_identity``:
-``track · car``, with stamp + hash4 on a muted meta line.
+Legacy ``format_session_title`` remains available:
+``DD/MM/YY HH:MM <hash4> <car> - <track>`` in Europe/London.
 
 Accuracy picker (mockup A + short hash) uses ``format_accuracy_session_title``:
 ``<track> · <car> · DD/MM HH:MM · <hash4>`` — GT suffix is applied by the
@@ -83,8 +84,12 @@ function formatSessionStampShort(startedAt) {
   return _formatStampParts(startedAt, { withYear: false });
 }
 
-// Dossier B / Current B call sites pass the session object.
+// Dossier B / Current B / History A call sites that pass the session object.
 function sessionHash4(session) {
+  return _sessionIdHash4(session);
+}
+
+function formatSessionHash4(session) {
   return _sessionIdHash4(session);
 }
 
@@ -94,6 +99,7 @@ function sessionStamp(session) {
 }
 
 function formatSessionIdentity(session) {
+  // History A / Dossier B / Current B: track · car
   const { car, track } = _sessionParts(session);
   return track + " \u00b7 " + car;
 }
@@ -167,13 +173,13 @@ def format_session_hash4(session: Mapping[str, Any] | None) -> str:
 
 
 def format_session_identity(session: Mapping[str, Any] | None) -> str:
-    """Brief dossier / current-strip title: ``track · car``."""
+    """Brief History / dossier / current-strip title: ``track · car``."""
     _, car, track = _session_fields(session)
     return f"{track} · {car}"
 
 
 def format_session_title(session: Mapping[str, Any] | None) -> str:
-    """Build the phone History session title.
+    """Build the legacy full session title.
 
     Example: ``27/10/26 14:05 a3f9 Audi R8 LMS - Brands Hatch``.
     """
