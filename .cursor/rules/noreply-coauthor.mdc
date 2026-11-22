@@ -1,0 +1,17 @@
+---
+description: Require GitHub noreply Co-authored-by; forbid yahoo / gary_blofeld trailers
+alwaysApply: true
+---
+
+noreply-coauthor:
+
+- Every agent commit that includes a `Co-authored-by` trailer MUST use exactly:
+  `Co-authored-by: blofelds <blofelds@users.noreply.github.com>`
+- NEVER use `gary_blofeld`, `gary_blofeld@yahoo.co.uk`, or any `yahoo.co.uk` address in:
+  - commit author / committer identity
+  - `Co-authored-by` (or other) trailers
+  - PR titles, bodies, or comments
+  - commit messages beyond replacing a forbidden trailer
+- Before every `git commit` and every `git push`, check the staged commit message (and `git log -1` after amend) for `yahoo`, `yahoo.co.uk`, or `gary_blofeld`. If found, amend or rewrite the message to the noreply trailer above and do not push the dirty SHA.
+- Prefer `git commit --amend` for the tip commit, or message-only `git filter-repo` / `git filter-branch` for already-pushed tips, then force-push only the affected branch (or main when explicitly scrubbing landed trailers).
+- Do not introduce personal first names into GitHub-bound material (PR text, commits, repo docs). Use neutral wording (operator / omit).
