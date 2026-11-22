@@ -68,7 +68,7 @@ _STATUS_HTML = """<!DOCTYPE html>
       font-size: 1rem;
     }
     textarea { min-height: 4.5rem; resize: vertical; }
-    .actions { display: flex; gap: 0.6rem; margin-top: 1rem; flex-wrap: wrap; }
+    .actions { display: flex; gap: 0.6rem; margin-top: 1rem; flex-wrap: wrap; align-items: center; }
     button {
       flex: 1;
       min-height: 2.75rem;
@@ -84,6 +84,24 @@ _STATUS_HTML = """<!DOCTYPE html>
     .btn-start { background: var(--ok); color: #062016; }
     .btn-end { background: var(--bad); color: #fff; }
     .btn-cancel { background: #2a3542; color: var(--text); }
+    .race-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex: 0 0 auto;
+      min-height: 2.75rem;
+      font-size: 1rem;
+      color: var(--text);
+      user-select: none;
+      cursor: pointer;
+    }
+    .race-check input {
+      width: 1.15rem;
+      height: 1.15rem;
+      accent-color: var(--ok);
+      margin: 0;
+    }
+    .race-check:has(input:disabled) { opacity: 0.45; cursor: not-allowed; }
     .dialog-backdrop {
       position: fixed; inset: 0; z-index: 40;
       display: flex; align-items: flex-end; justify-content: center;
@@ -309,6 +327,10 @@ _STATUS_HTML = """<!DOCTYPE html>
     <label for="notes">Notes</label>
     <textarea id="notes" placeholder="Optional — tyre set, weather, setup…"></textarea>
     <div class="actions">
+      <label class="race-check" for="race">
+        <input type="checkbox" id="race" />
+        Race
+      </label>
       <button type="button" class="btn-start" id="btn-start">Start session</button>
       <button type="button" class="btn-end" id="btn-end" disabled>End session</button>
     </div>
@@ -383,11 +405,24 @@ _STATUS_HTML = """<!DOCTYPE html>
     /*__SESSION_TITLE_JS__*/
     /*__STINT_SCROLL_JS__*/
     const $ = (id) => document.getElementById(id);
+    const RACE_KEY = "ac_telemetry_race";
     let currentId = null;
     let dossierId = null;
     let dossierView = "list";
     let dossierPoll = null;
     let stintSessionId = null;
+
+    function loadRaceChoice() {
+      try {
+        $("race").checked = localStorage.getItem(RACE_KEY) === "1";
+      } catch (e) { /* private mode / blocked storage */ }
+    }
+
+    function saveRaceChoice() {
+      try {
+        localStorage.setItem(RACE_KEY, $("race").checked ? "1" : "0");
+      } catch (e) { /* ignore */ }
+    }
 
     function setMsg(text, isErr) {
       const el = $("msg");
@@ -453,6 +488,7 @@ _STATUS_HTML = """<!DOCTYPE html>
         $("current").textContent = "No session running.";
         $("btn-start").disabled = false;
         $("btn-end").disabled = true;
+        $("race").disabled = false;
         renderStint([], null);
         return;
       }
@@ -469,6 +505,10 @@ _STATUS_HTML = """<!DOCTYPE html>
         "</div>";
       $("btn-start").disabled = true;
       $("btn-end").disabled = false;
+      $("race").disabled = true;
+      if (session.session_type === "r" || session.session_type === "p") {
+        $("race").checked = session.session_type === "r";
+      }
       if (!$("track").value) $("track").value = session.track || "";
       if (!$("car").value) $("car").value = session.car || "";
       if (!$("notes").value) $("notes").value = session.notes || "";
@@ -763,8 +803,12 @@ _STATUS_HTML = """<!DOCTYPE html>
       $("end-dialog").classList.add("is-hidden");
     }
 
+    $("race").addEventListener("change", saveRaceChoice);
+    loadRaceChoice();
+
     $("btn-start").addEventListener("click", async () => {
       setMsg("Starting…");
+      saveRaceChoice();
       try {
         const r = await fetch("/api/sessions", {
           method: "POST",
@@ -773,6 +817,7 @@ _STATUS_HTML = """<!DOCTYPE html>
             track: $("track").value.trim(),
             car: $("car").value.trim(),
             notes: $("notes").value.trim(),
+            race: $("race").checked,
           }),
         });
         const d = await r.json().catch(() => ({}));

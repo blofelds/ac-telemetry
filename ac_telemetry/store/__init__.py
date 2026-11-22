@@ -16,7 +16,13 @@ from pathlib import Path
 from typing import Any
 
 from ac_telemetry.capture import CaptureStats
-from ac_telemetry.store.laps import LAP_FIELDS, LapStore
+from ac_telemetry.store.laps import (
+    LAP_FIELDS,
+    SESSION_TYPE_PRACTICE,
+    SESSION_TYPE_RACE,
+    LapStore,
+    normalize_session_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +30,12 @@ __all__ = [
     "LAP_FIELDS",
     "LapStore",
     "SESSION_FIELDS",
+    "SESSION_TYPE_PRACTICE",
+    "SESSION_TYPE_RACE",
     "SessionConflict",
     "SessionNotFound",
     "SessionStore",
+    "normalize_session_type",
 ]
 
 SESSION_FIELDS = [
@@ -36,6 +45,7 @@ SESSION_FIELDS = [
     "track",
     "car",
     "notes",
+    "session_type",
     "backend",
     "profile",
     "device",
@@ -108,6 +118,8 @@ class SessionStore:
         track: str = "",
         car: str = "",
         notes: str = "",
+        race: bool | None = None,
+        session_type: str = "",
         stats: CaptureStats | None = None,
     ) -> dict:
         """Create a running session from phone/API metadata."""
@@ -125,6 +137,7 @@ class SessionStore:
                 track=(track or "").strip(),
                 car=(car or "").strip(),
                 notes=(notes or "").strip(),
+                session_type=normalize_session_type(session_type, race=race),
                 status="running",
             )
             if stats is not None:

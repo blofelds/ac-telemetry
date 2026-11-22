@@ -100,6 +100,51 @@ def test_lap_store_note_column_migration(tmp_path: Path) -> None:
     rows = store.list_laps(session_id="s1", limit=10)
     assert rows[0]["lap_time"] == "1:07.717"
     assert rows[0].get("note", "") == ""
+    assert rows[0].get("session_type", "") == ""
+
+
+def test_build_gt_customer_rows_preserves_session_type() -> None:
+    """Confirm rewrite stamps every customer lap with the session's r/p kind."""
+    from ac_telemetry.accuracy.helper import build_gt_customer_rows
+    from ac_telemetry.accuracy.score import load_gt_list
+
+    ocr = [
+        {
+            "session_id": "race1",
+            "session_type": "r",
+            "lap_number": "1",
+            "lap_time": "1:00.000",
+            "lap_time_ms": "60000",
+            "recorded_at": "2026-10-11T12:00:00+00:00",
+            "source": "mock",
+            "raw_text": "1:00.000",
+            "note": "",
+        },
+        {
+            "session_id": "race1",
+            "session_type": "r",
+            "lap_number": "2",
+            "lap_time": "1:01.000",
+            "lap_time_ms": "61000",
+            "recorded_at": "2026-10-11T12:01:00+00:00",
+            "source": "mock",
+            "raw_text": "1:01.000",
+            "note": "",
+        },
+    ]
+    gt = load_gt_list(
+        [
+            {"lap_time": "1:00.000", "mark": "normal", "csv_lap_number": 1},
+            {"lap_time": "1:00.500", "mark": "skip"},
+            {"lap_time": "1:01.000", "mark": "normal", "csv_lap_number": 2},
+        ]
+    )
+    rows = build_gt_customer_rows(
+        session_id="race1", gt_laps=gt, ocr_chrono=ocr, note=GT_CONFIRMED_NOTE
+    )
+    assert len(rows) == 3
+    assert all(r["session_type"] == "r" for r in rows)
+    assert rows[1]["source"] == "gt_skip"
 
 
 def test_lap_store_update_session_laps_note_and_times(tmp_path: Path) -> None:

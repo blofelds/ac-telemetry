@@ -60,6 +60,73 @@ def test_lap_store_append_and_list(tmp_path: Path) -> None:
     assert laps[0]["lap_time"] == "1:42.100"
 
 
+def test_lap_csv_session_type_r_and_p(tmp_path: Path) -> None:
+    """Every lap row carries session_type ``r`` (race) or ``p`` (practice)."""
+    from ac_telemetry.store import LAP_FIELDS, normalize_session_type
+
+    store = LapStore(tmp_path / "sessions")
+    store.ensure()
+    header = store.path.read_text(encoding="utf-8").splitlines()[0]
+    assert "session_type" in header.split(",")
+    assert header.split(",") == LAP_FIELDS
+
+    race = store.append_lap(
+        {
+            "session_id": "race1",
+            "session_type": "r",
+            "lap_number": 1,
+            "lap_time": "1:40.000",
+            "lap_time_ms": 100_000,
+            "source": "mock",
+            "raw_text": "1:40.000",
+        }
+    )
+    practice = store.append_lap(
+        {
+            "session_id": "prac1",
+            "session_type": normalize_session_type(race=False),
+            "lap_number": 1,
+            "lap_time": "1:41.000",
+            "lap_time_ms": 101_000,
+            "source": "mock",
+            "raw_text": "1:41.000",
+        }
+    )
+    assert race["session_type"] == "r"
+    assert practice["session_type"] == "p"
+    assert store.list_laps(session_id="race1")[0]["session_type"] == "r"
+    assert store.list_laps(session_id="prac1")[0]["session_type"] == "p"
+
+
+def test_detect_lap_write_stamps_session_type_from_session(tmp_path: Path) -> None:
+    """Open race session → recorded laps get session_type ``r`` in laps.csv."""
+    client, detect = _client(tmp_path)
+    created = client.post(
+        "/api/sessions",
+        json={"track": "Monza", "car": "Ferrari", "race": True},
+    )
+    assert created.status_code == 201
+    assert created.json()["session"]["session_type"] == "r"
+
+    detect.start()
+    try:
+        deadline = time.time() + 4.0
+        laps: list[dict[str, Any]] = []
+        while time.time() < deadline:
+            laps = client.get("/api/laps").json().get("laps") or []
+            if laps:
+                break
+            time.sleep(0.2)
+        assert laps, "expected at least one recorded lap"
+        assert laps[0]["session_type"] == "r"
+        csv_header = (tmp_path / "sessions" / "laps.csv").read_text(
+            encoding="utf-8"
+        ).splitlines()[0]
+        assert "session_type" in csv_header.split(",")
+    finally:
+        detect.stop()
+
+
 def _client(tmp_path: Path) -> tuple[TestClient, DetectService]:
     settings = load_settings()
     settings.data_dir = tmp_path / "sessions"
@@ -78,11 +145,20 @@ def _client(tmp_path: Path) -> tuple[TestClient, DetectService]:
     lap_store = LapStore(settings.data_dir)
     lap_store.ensure()
     capture = CaptureService(settings=settings)
+
+    def record_lap(row: dict[str, Any]) -> dict[str, Any]:
+        from ac_telemetry.store import normalize_session_type
+
+        payload = dict(row)
+        session = store.current_session() or {}
+        payload["session_type"] = normalize_session_type(session.get("session_type"))
+        return lap_store.append_lap(payload)
+
     detect = DetectService(
         settings=settings,
         get_frame=capture.get_latest_frame,
         get_session_id=lambda: (store.current_session() or {}).get("session_id"),
-        record_lap=lap_store.append_lap,
+        record_lap=record_lap,
     )
     app = create_app(
         settings, capture, store, lap_store=lap_store, detect=detect
