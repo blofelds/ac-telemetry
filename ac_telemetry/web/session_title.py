@@ -1,8 +1,14 @@
 """UI-only session title formatting.
 
-Display convention: ``DD/MM/YY HH:MM <hash4> <car> - <track>`` in
-Europe/London. Storage, CSV, API payloads, and folder names are untouched —
-callers format labels in the browser (or tests) from existing session fields.
+Phone history / dossier use ``format_session_title``:
+``DD/MM/YY HH:MM <hash4> <car> - <track>`` in Europe/London.
+
+Accuracy picker (mockup A + short hash) uses ``format_accuracy_session_title``:
+``<track> · <car> · DD/MM HH:MM · <hash4>`` — GT suffix is applied by the
+picker (`` · GT confirmed`` / `` · GT``).
+
+Storage, CSV, API payloads, and folder names are untouched — callers format
+labels in the browser (or tests) from existing session fields.
 """
 
 from __future__ import annotations
@@ -16,47 +22,77 @@ _TZ = ZoneInfo(DISPLAY_TIMEZONE)
 
 # Missing stamp / identity placeholders keep the title shape stable in lists.
 _MISSING_STAMP = "--/--/-- --:--"
+_MISSING_STAMP_SHORT = "--/-- --:--"
 _MISSING_HASH = "----"
 _MISSING_PART = "—"
 
-# Browser twin of format_session_title — keep behaviour in lockstep with tests.
+# Browser twin of the Python formatters — keep behaviour in lockstep with tests.
 SESSION_TITLE_JS = r"""
-function formatSessionTitle(session) {
+function _sessionIdHash4(session) {
   const s = session || {};
   const id = String(s.session_id || s.id || "");
-  const hash4 = id ? id.slice(0, 4) : "----";
-  const car = String(s.car || "").trim() || "\u2014";
-  const track = String(s.track || "").trim() || "\u2014";
-  let stamp = "--/--/-- --:--";
-  if (s.started_at) {
-    const d = new Date(s.started_at);
-    if (!Number.isNaN(d.getTime())) {
-      const parts = new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Europe/London",
-        day: "2-digit",
-        month: "2-digit",
-        year: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-      }).formatToParts(d);
-      const get = (type) => {
-        const hit = parts.find((p) => p.type === type);
-        return hit ? hit.value : "";
-      };
-      stamp =
-        get("day") +
-        "/" +
-        get("month") +
-        "/" +
-        get("year") +
-        " " +
-        get("hour") +
-        ":" +
-        get("minute");
-    }
+  return id ? id.slice(0, 4) : "----";
+}
+
+function _sessionParts(session) {
+  const s = session || {};
+  return {
+    hash4: _sessionIdHash4(s),
+    car: String(s.car || "").trim() || "\u2014",
+    track: String(s.track || "").trim() || "\u2014",
+  };
+}
+
+function _formatStampParts(startedAt, { withYear }) {
+  if (!startedAt) {
+    return withYear ? "--/--/-- --:--" : "--/-- --:--";
   }
+  const d = new Date(startedAt);
+  if (Number.isNaN(d.getTime())) {
+    return withYear ? "--/--/-- --:--" : "--/-- --:--";
+  }
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const get = (type) => {
+    const hit = parts.find((p) => p.type === type);
+    return hit ? hit.value : "";
+  };
+  const dayMonth = get("day") + "/" + get("month");
+  const hm = get("hour") + ":" + get("minute");
+  if (withYear) {
+    return dayMonth + "/" + get("year") + " " + hm;
+  }
+  return dayMonth + " " + hm;
+}
+
+function formatSessionStamp(startedAt) {
+  return _formatStampParts(startedAt, { withYear: true });
+}
+
+function formatSessionStampShort(startedAt) {
+  return _formatStampParts(startedAt, { withYear: false });
+}
+
+function formatSessionTitle(session) {
+  const s = session || {};
+  const { hash4, car, track } = _sessionParts(s);
+  const stamp = formatSessionStamp(s.started_at);
   return stamp + " " + hash4 + " " + car + " - " + track;
+}
+
+function formatAccuracySessionTitle(session) {
+  // Accuracy picker A: track · car · DD/MM HH:MM · hash4
+  const s = session || {};
+  const { hash4, car, track } = _sessionParts(s);
+  const stamp = formatSessionStampShort(s.started_at);
+  return track + " \u00b7 " + car + " \u00b7 " + stamp + " \u00b7 " + hash4;
 }
 """.strip()
 
@@ -79,6 +115,15 @@ def _parse_started_at(raw: Any) -> datetime | None:
     return dt
 
 
+def _session_fields(session: Mapping[str, Any] | None) -> tuple[str, str, str]:
+    s = session or {}
+    sid = str(s.get("session_id") or s.get("id") or "")
+    hash4 = sid[:4] if sid else _MISSING_HASH
+    car = str(s.get("car") or "").strip() or _MISSING_PART
+    track = str(s.get("track") or "").strip() or _MISSING_PART
+    return hash4, car, track
+
+
 def format_session_stamp(started_at: Any) -> str:
     """Format ``started_at`` as ``DD/MM/YY HH:MM`` in Europe/London."""
     dt = _parse_started_at(started_at)
@@ -88,15 +133,31 @@ def format_session_stamp(started_at: Any) -> str:
     return local.strftime("%d/%m/%y %H:%M")
 
 
+def format_session_stamp_short(started_at: Any) -> str:
+    """Format ``started_at`` as ``DD/MM HH:MM`` in Europe/London (no year)."""
+    dt = _parse_started_at(started_at)
+    if dt is None:
+        return _MISSING_STAMP_SHORT
+    local = dt.astimezone(_TZ)
+    return local.strftime("%d/%m %H:%M")
+
+
 def format_session_title(session: Mapping[str, Any] | None) -> str:
-    """Build the UI session title from existing session fields.
+    """Build the phone History / dossier session title.
 
     Example: ``27/10/26 14:05 a3f9 Audi R8 LMS - Brands Hatch``.
     """
-    s = session or {}
-    sid = str(s.get("session_id") or s.get("id") or "")
-    hash4 = sid[:4] if sid else _MISSING_HASH
-    car = str(s.get("car") or "").strip() or _MISSING_PART
-    track = str(s.get("track") or "").strip() or _MISSING_PART
-    stamp = format_session_stamp(s.get("started_at"))
+    hash4, car, track = _session_fields(session)
+    stamp = format_session_stamp((session or {}).get("started_at"))
     return f"{stamp} {hash4} {car} - {track}"
+
+
+def format_accuracy_session_title(session: Mapping[str, Any] | None) -> str:
+    """Build Accuracy picker title A with short hash before the GT suffix.
+
+    Example: ``Vallelunga Club · Abarth · 22/11 14:05 · a3f9``.
+    The picker appends `` · GT confirmed`` or `` · GT`` when confirmed.
+    """
+    hash4, car, track = _session_fields(session)
+    stamp = format_session_stamp_short((session or {}).get("started_at"))
+    return f"{track} · {car} · {stamp} · {hash4}"

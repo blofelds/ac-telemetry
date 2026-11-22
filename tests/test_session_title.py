@@ -1,4 +1,4 @@
-"""UI-only session title format: DD/MM/YY HH:MM hash4 car - track."""
+"""UI-only session title formats for phone History and Accuracy picker A."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ from pathlib import Path
 from ac_telemetry.web.session_title import (
     DISPLAY_TIMEZONE,
     SESSION_TITLE_JS,
+    format_accuracy_session_title,
     format_session_stamp,
+    format_session_stamp_short,
     format_session_title,
 )
 
@@ -17,6 +19,7 @@ def test_display_timezone_is_europe_london() -> None:
     assert DISPLAY_TIMEZONE == "Europe/London"
     assert "Europe/London" in SESSION_TITLE_JS
     assert "function formatSessionTitle" in SESSION_TITLE_JS
+    assert "function formatAccuracySessionTitle" in SESSION_TITLE_JS
 
 
 def test_format_session_title_example_bst() -> None:
@@ -64,6 +67,41 @@ def test_format_session_title_missing_fields_keep_shape() -> None:
 
 def test_format_session_stamp_naive_iso_treated_as_utc() -> None:
     assert format_session_stamp("2026-03-01T12:00:00") == "01/03/26 12:00"
+    assert format_session_stamp_short("2026-03-01T12:00:00") == "01/03 12:00"
+
+
+def test_format_accuracy_session_title_a_with_hash() -> None:
+    # Accuracy A: track · car · DD/MM HH:MM · hash4 (hash before GT suffix).
+    # 14:05 UTC on 22 Nov → 14:05 Europe/London (GMT).
+    title = format_accuracy_session_title(
+        {
+            "session_id": "a3f9c2e1b8d04f11",
+            "started_at": "2026-11-22T14:05:00+00:00",
+            "car": "Abarth",
+            "track": "Vallelunga Club",
+        }
+    )
+    assert title == "Vallelunga Club · Abarth · 22/11 14:05 · a3f9"
+    # Confirmed picker option appends the suffix after the hash.
+    assert title + " · GT confirmed" == (
+        "Vallelunga Club · Abarth · 22/11 14:05 · a3f9 · GT confirmed"
+    )
+    assert title + " · GT" == "Vallelunga Club · Abarth · 22/11 14:05 · a3f9 · GT"
+
+
+def test_format_accuracy_session_title_bst_and_missing() -> None:
+    # 13:05 UTC in July → 14:05 BST; short stamp drops the year.
+    title = format_accuracy_session_title(
+        {
+            "session_id": "a3f9c812dead",
+            "started_at": "2026-07-01T13:05:00+00:00",
+            "car": "Audi R8 LMS",
+            "track": "Brands Hatch",
+        }
+    )
+    assert title == "Brands Hatch · Audi R8 LMS · 01/07 14:05 · a3f9"
+    missing = format_accuracy_session_title({"session_id": "xy"})
+    assert missing == "— · — · --/-- --:-- · xy"
 
 
 def test_shared_js_helper_embedded_in_phone_and_accuracy_ui() -> None:
@@ -72,6 +110,7 @@ def test_shared_js_helper_embedded_in_phone_and_accuracy_ui() -> None:
 
     for html in (STATUS_HTML, ACCURACY_HELPER_HTML):
         assert "formatSessionTitle" in html
+        assert "formatAccuracySessionTitle" in html
         assert "Europe/London" in html
         # Placeholder must be expanded; raw marker must not leak into pages.
         assert "/*__SESSION_TITLE_JS__*/" not in html
@@ -82,7 +121,9 @@ def test_phone_history_and_accuracy_picker_call_formatter() -> None:
     from ac_telemetry.web.accuracy import ACCURACY_HELPER_HTML
 
     assert "formatSessionTitle(s)" in STATUS_HTML
-    assert "formatSessionTitle(s)" in ACCURACY_HELPER_HTML
+    assert "let label = formatAccuracySessionTitle(s);" in ACCURACY_HELPER_HTML
+    # Accuracy picker A owns option text; do not fall back to phone History title.
+    assert "let label = formatSessionTitle(s);" not in ACCURACY_HELPER_HTML
     # Old label shapes should no longer drive the title/option text.
     assert '(s.track || "—") + " · " + (s.car || "—")' not in STATUS_HTML
     assert "[track, car].filter(Boolean).join" not in ACCURACY_HELPER_HTML
