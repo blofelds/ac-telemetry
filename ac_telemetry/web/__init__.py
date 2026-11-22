@@ -484,6 +484,8 @@ _STATUS_HTML = """<!DOCTYPE html>
     }
 
     function renderHistory(sessions) {
+      // History layout A (session header mockups): lead with track · car;
+      // demote stamp/hash; live cue only when running — never a stopped tag.
       const ul = $("history");
       if (!sessions || !sessions.length) {
         ul.innerHTML = "<li class=\\"meta\\">No sessions yet.</li>";
@@ -491,16 +493,15 @@ _STATUS_HTML = """<!DOCTYPE html>
       }
       ul.innerHTML = sessions.map((s) => {
         const badge = s.status === "running"
-          ? "<span class=\\"badge run\\">running</span>"
-          : "<span class=\\"badge stop\\">stopped</span>";
+          ? "<span class=\\"badge run\\">live</span>"
+          : "";
         const gtBadge = s.gt_confirmed
-          ? "<span class=\\"badge gt\\">GT confirmed</span>"
+          ? "<span class=\\"badge gt\\">GT</span>"
           : "";
         // UI-only label; API/CSV session fields stay unchanged.
-        const title = formatSessionTitle(s);
-        const meta = (s.started_at || "") +
-          (s.ended_at ? " → " + s.ended_at : "") +
-          " · " + (s.session_id || "");
+        const title = formatSessionIdentity(s);
+        const meta =
+          formatSessionStampShort(s.started_at) + " · " + formatSessionHash4(s);
         const notes = s.notes
           ? "<div class=\\"meta\\">" + escapeHtml(s.notes) + "</div>"
           : "";
