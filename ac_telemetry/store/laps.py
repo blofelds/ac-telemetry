@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 LAP_FIELDS = [
     "session_id",
+    "session_type",
     "lap_number",
     "lap_time",
     "lap_time_ms",
@@ -23,6 +24,28 @@ LAP_FIELDS = [
     "raw_text",
     "note",
 ]
+
+# Per-lap / per-session kind: race vs practice (not-race). Short CSV values.
+SESSION_TYPE_RACE = "r"
+SESSION_TYPE_PRACTICE = "p"
+
+
+def normalize_session_type(
+    value: Any = None,
+    *,
+    race: bool | None = None,
+) -> str:
+    """Return ``r`` (race) or ``p`` (practice / not-race). Default ``p``."""
+    if race is True:
+        return SESSION_TYPE_RACE
+    if race is False:
+        return SESSION_TYPE_PRACTICE
+    raw = str(value or "").strip().lower()
+    if raw in (SESSION_TYPE_RACE, "race"):
+        return SESSION_TYPE_RACE
+    if raw in (SESSION_TYPE_PRACTICE, "practice", "not-race", "not_race"):
+        return SESSION_TYPE_PRACTICE
+    return SESSION_TYPE_PRACTICE
 
 
 def _utc_now_iso() -> str:

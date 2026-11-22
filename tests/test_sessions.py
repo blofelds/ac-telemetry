@@ -61,11 +61,38 @@ def test_session_lifecycle_and_history(tmp_path: Path) -> None:
     after = client.get("/api/sessions/current")
     assert after.json()["session"] is None
 
-    # CSV on disk has track/car/notes columns
+    # CSV on disk has track/car/notes/session_type columns
     csv_path = tmp_path / "sessions" / "sessions.csv"
     text = csv_path.read_text(encoding="utf-8")
-    assert "track,car,notes" in text.splitlines()[0]
+    header = text.splitlines()[0]
+    assert "track,car,notes,session_type" in header
     assert "Monza" in text
+    assert created.json()["session"]["session_type"] == "p"
+
+
+def test_session_create_race_flag_sets_session_type(tmp_path: Path) -> None:
+    """POST /api/sessions race checkbox → session_type r/p on the session row."""
+    client = _client(tmp_path)
+
+    race = client.post(
+        "/api/sessions",
+        json={"track": "Monza", "car": "Ferrari", "notes": "", "race": True},
+    )
+    assert race.status_code == 201
+    assert race.json()["session"]["session_type"] == "r"
+    sid = race.json()["session"]["session_id"]
+    assert client.post(f"/api/sessions/{sid}/end").status_code == 200
+
+    practice = client.post(
+        "/api/sessions",
+        json={"track": "Spa", "car": "Porsche", "race": False},
+    )
+    assert practice.status_code == 201
+    assert practice.json()["session"]["session_type"] == "p"
+
+    csv_path = tmp_path / "sessions" / "sessions.csv"
+    header = csv_path.read_text(encoding="utf-8").splitlines()[0]
+    assert "session_type" in header.split(",")
 
 
 def test_status_html_tyre_spelling_and_last_session_prefill() -> None:
@@ -85,6 +112,25 @@ def test_status_html_tyre_spelling_and_last_session_prefill() -> None:
     assert 'car: $("car").value.trim()' in end_block
     assert "notes: notes" in end_block
     assert "notesWithDrivenLaps" in end_block
+
+
+def test_status_html_race_checkbox_beside_start() -> None:
+    """Phone UI: Race checkbox beside Start; localStorage + race flag on start."""
+    from ac_telemetry.web import STATUS_HTML
+
+    assert 'id="race"' in STATUS_HTML
+    assert "Race" in STATUS_HTML
+    assert "race-check" in STATUS_HTML
+    assert "ac_telemetry_race" in STATUS_HTML
+    assert "localStorage" in STATUS_HTML
+    assert "loadRaceChoice" in STATUS_HTML
+    assert "saveRaceChoice" in STATUS_HTML
+    # No popup for race — checkbox is inline next to Start; start posts race bool.
+    start_block = STATUS_HTML.split('$("btn-start").addEventListener', 1)[1]
+    start_body = start_block.split('$("btn-end").addEventListener', 1)[0]
+    assert 'race: $("race").checked' in start_body
+    assert "openEndDialog" not in start_body
+    assert 'id="race"' in STATUS_HTML.split('id="btn-start"', 1)[0]
 
 
 def test_status_html_end_session_driven_laps_prompt() -> None:

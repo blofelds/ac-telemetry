@@ -26,6 +26,8 @@ class SessionCreate(BaseModel):
     track: str = Field(default="", max_length=120)
     car: str = Field(default="", max_length=120)
     notes: str = Field(default="", max_length=2000)
+    # Phone "Race" checkbox: true → session_type ``r``, false/omit → ``p``.
+    race: bool = False
 
 
 class SessionUpdate(BaseModel):
@@ -534,6 +536,7 @@ def create_app(
                 track=body.track,
                 car=body.car,
                 notes=body.notes,
+                race=body.race,
                 stats=capture.stats,
             )
         except SessionConflict as exc:
