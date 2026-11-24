@@ -104,6 +104,7 @@ __REVIEW_CSS__
       </div>
 
       <div class="notice is-hidden" id="filter-notice" role="status" aria-live="polite"></div>
+      <div class="load-status" id="load-status" role="status" aria-live="polite"></div>
     </section>
 
     <div class="view-tabs" role="tablist" aria-label="Review visualisations">
