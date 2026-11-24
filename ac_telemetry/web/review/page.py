@@ -13,6 +13,7 @@ from ac_telemetry.web.review.svg_bar_js import REVIEW_SVG_BAR_JS
 from ac_telemetry.web.review.svg_line_js import REVIEW_SVG_LINE_JS
 from ac_telemetry.web.review.view_overview_js import REVIEW_OVERVIEW_JS
 from ac_telemetry.web.review.view_progression_js import REVIEW_PROGRESSION_JS
+from ac_telemetry.web.review.view_stints_js import REVIEW_STINTS_JS
 
 _REVIEW_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -144,6 +145,7 @@ _VIEW_SCRIPTS: tuple[str, ...] = (
     REVIEW_SVG_LINE_JS,
     REVIEW_SVG_BAR_JS,
     REVIEW_PROGRESSION_JS,
+    REVIEW_STINTS_JS,
 )
 
 
