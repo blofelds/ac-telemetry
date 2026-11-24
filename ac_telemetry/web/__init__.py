@@ -302,10 +302,20 @@ _STATUS_HTML = """<!DOCTYPE html>
     .lap-board tr.best .gap { color: var(--ok); font-weight: 600; }
     .dossier-empty { color: var(--muted); font-size: 0.9rem; margin: 0.5rem 0; }
     .is-hidden { display: none !important; }
+    .top-nav {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 0.75rem; max-width: 420px; margin: 0 0 0.75rem; font-size: 0.85rem;
+    }
+    .top-nav .brand { font-weight: 600; color: var(--text); }
+    .top-nav .links { display: flex; gap: 0.75rem; }
   </style>
 </head>
 <body>
   <div id="home-view">
+  <nav class="top-nav" aria-label="Main navigation">
+    <span class="brand">AC Telemetry</span>
+    <span class="links"><a href="/review">Review</a><a href="/accuracy">Accuracy</a></span>
+  </nav>
   <div class="grid">
     <div class="stat"><div class="label">Last recorded</div><div class="value" id="lap-recorded">…</div></div>
     <div class="stat"><div class="label">Displayed</div><div class="value" id="lap-display" style="color:var(--lap)">…</div></div>
@@ -353,7 +363,7 @@ _STATUS_HTML = """<!DOCTYPE html>
   <ul class="history" id="history"><li class="meta">Loading…</li></ul>
 
   <footer>
-    <a href="/health">/health</a> · <a href="/metrics">/metrics</a> ·
+    <a href="/review">Review</a> · <a href="/health">/health</a> · <a href="/metrics">/metrics</a> ·
     <a href="/api/sessions">/api/sessions</a> · <a href="/api/laps">/api/laps</a> ·
     <a href="/debug">ROI debug</a>
     <div class="build">commit __GIT_SHA__</div>
