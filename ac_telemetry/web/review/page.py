@@ -9,6 +9,7 @@ from ac_telemetry.web.review.helpers_js import REVIEW_HELPERS_JS
 from ac_telemetry.web.review.shell_js import REVIEW_SHELL_JS
 from ac_telemetry.web.review.styles_base import REVIEW_BASE_CSS
 from ac_telemetry.web.review.styles_views import REVIEW_VIEWS_CSS
+from ac_telemetry.web.review.view_overview_js import REVIEW_OVERVIEW_JS
 
 _REVIEW_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -135,7 +136,7 @@ __REVIEW_JS__
 </html>
 """
 
-_VIEW_SCRIPTS: tuple[str, ...] = ()
+_VIEW_SCRIPTS: tuple[str, ...] = (REVIEW_OVERVIEW_JS,)
 
 
 def build_review_html(extra_scripts: Sequence[str] = ()) -> str:
