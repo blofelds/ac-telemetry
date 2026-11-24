@@ -20,6 +20,7 @@ from ac_telemetry.runtime_info import runtime_snapshot
 from ac_telemetry.settings import Settings
 from ac_telemetry.store import LapStore, SessionConflict, SessionNotFound, SessionStore
 from ac_telemetry.web import DEBUG_HTML, STATUS_HTML
+from ac_telemetry.web.review import REVIEW_HTML, build_review_payload
 
 
 class SessionCreate(BaseModel):
@@ -113,6 +114,34 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def status_page() -> str:
         return STATUS_HTML
+
+    @app.get("/review", response_class=HTMLResponse)
+    def review_page() -> str:
+        """Session visualisations review page."""
+        return REVIEW_HTML
+
+    @app.get("/api/review")
+    def api_review(
+        track: str = Query(default="All"),
+        car: str = Query(default="All"),
+        session_type: str = Query(default="all"),
+        q: str = Query(default=""),
+        trim_outliers: bool = Query(default=True),
+        hide_empty: bool = Query(default=True),
+    ) -> dict[str, Any]:
+        """Aggregated review payload from existing sessions.csv and laps.csv."""
+        return build_review_payload(
+            store,
+            lap_store,
+            data_dir=settings.data_dir,
+            accuracy_subdir=settings.accuracy.subdir,
+            track=track,
+            car=car,
+            session_type=session_type,
+            notes_query=q,
+            trim_outliers=trim_outliers,
+            hide_empty=hide_empty,
+        )
 
     @app.get("/debug", response_class=HTMLResponse)
     def debug_page() -> str:

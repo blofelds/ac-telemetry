@@ -171,7 +171,7 @@ _ACCURACY_HELPER_HTML = """<!DOCTYPE html>
 <body>
   <h1>GT eyeball</h1>
   <p class="sub">Two tee crops per hold · edit times · mark double/skip · Confirm</p>
-  <p><a class="home" href="/">← Phone home</a></p>
+  <p><a class="home" href="/">← Phone home</a> · <a class="home" href="/review">Review</a></p>
 
   <div class="bar">
     <div>
