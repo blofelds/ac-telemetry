@@ -11,6 +11,7 @@ from ac_telemetry.web.review.styles_base import REVIEW_BASE_CSS
 from ac_telemetry.web.review.styles_views import REVIEW_VIEWS_CSS
 from ac_telemetry.web.review.svg_bar_js import REVIEW_SVG_BAR_JS
 from ac_telemetry.web.review.svg_line_js import REVIEW_SVG_LINE_JS
+from ac_telemetry.web.review.view_activity_js import REVIEW_ACTIVITY_JS
 from ac_telemetry.web.review.view_overview_js import REVIEW_OVERVIEW_JS
 from ac_telemetry.web.review.view_progression_js import REVIEW_PROGRESSION_JS
 from ac_telemetry.web.review.view_pvr_js import REVIEW_PVR_JS
@@ -148,6 +149,7 @@ _VIEW_SCRIPTS: tuple[str, ...] = (
     REVIEW_PROGRESSION_JS,
     REVIEW_STINTS_JS,
     REVIEW_PVR_JS,
+    REVIEW_ACTIVITY_JS,
 )
 
 
