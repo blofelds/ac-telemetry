@@ -13,6 +13,7 @@ from ac_telemetry.web.review.loader import (
     build_review_payload,
     load_enriched_sessions,
 )
+from ac_telemetry.web.review.page import REVIEW_HTML, build_review_html
 from ac_telemetry.web.review.stats import (
     OUTLIER_THRESHOLD_RATIO,
     compute_lap_stats,
@@ -26,10 +27,12 @@ from ac_telemetry.web.review.stats import (
 
 __all__ = [
     "OUTLIER_THRESHOLD_RATIO",
+    "REVIEW_HTML",
     "build_activity_buckets",
     "build_combo_leaderboard",
     "build_pace_progression",
     "build_practice_vs_race",
+    "build_review_html",
     "build_review_payload",
     "build_stint_comparison",
     "compute_lap_stats",
