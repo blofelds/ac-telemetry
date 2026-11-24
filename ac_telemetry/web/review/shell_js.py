@@ -179,6 +179,12 @@ REVIEW_SHELL_JS = r"""
       "View module not yet loaded (" + H.escapeHtml(label) + ").</div>";
   }
 
+  function setLoadStatus(text) {
+    const el = $("load-status");
+    if (!el) return;
+    el.textContent = text || "";
+  }
+
   let fetchSeq = 0;
   async function fetchReviewData() {
     const seq = ++fetchSeq;
@@ -189,6 +195,7 @@ REVIEW_SHELL_JS = r"""
     if (state.notesQuery.trim()) params.set("q", state.notesQuery.trim());
     params.set("trim_outliers", state.trimOutliers ? "true" : "false");
     params.set("hide_empty", state.hideEmpty ? "true" : "false");
+    setLoadStatus("Loading…");
     try {
       const resp = await fetch("/api/review?" + params.toString());
       if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -203,6 +210,8 @@ REVIEW_SHELL_JS = r"""
       if (seq !== fetchSeq) return;
       state.error = String(err);
       updateFilterControls();
+    } finally {
+      if (seq === fetchSeq) setLoadStatus("");
     }
   }
 

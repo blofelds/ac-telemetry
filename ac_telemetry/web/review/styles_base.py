@@ -102,11 +102,12 @@ REVIEW_BASE_CSS = """
     .stack { display: flex; flex-direction: column; gap: 14px; }
 
     .filter-bar {
+      position: relative;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 12px 14px;
-      margin-bottom: 14px;
+      margin-bottom: 24px;
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -188,6 +189,18 @@ REVIEW_BASE_CSS = """
     }
     .notice.is-hidden { display: none; }
     .notice-err { background: var(--surface-muted); border-color: var(--red); color: var(--red); }
+    .load-status {
+      position: absolute;
+      top: 100%;
+      left: 14px;
+      margin: 4px 0 0;
+      font-size: 12px;
+      line-height: 1.2;
+      min-height: 1.2em;
+      color: var(--text-muted);
+      white-space: nowrap;
+      pointer-events: none;
+    }
 
     .view-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
     .view-tab {
@@ -223,6 +236,7 @@ REVIEW_BASE_CSS = """
       .topbar-inner { padding: 10px 12px; }
       .container { padding: 12px 12px 24px; }
       .filter-bar { padding: 10px; }
+      .load-status { left: 10px; }
       .ctrl { width: 100%; min-width: 0; }
       .seg-group { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .seg-btn { text-align: center; padding: 7px 6px; }
