@@ -209,4 +209,14 @@ REVIEW_VIEWS_CSS = """
       border-radius: 6px;
       margin-top: 8px;
     }
+
+    @media (max-width: 820px) {
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .two-col { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (max-width: 520px) {
+      .session-item { flex-direction: column; align-items: flex-start; }
+      .session-item-notes { white-space: normal; }
+      .kpi-value { font-size: 18px; }
+    }
 """.strip()

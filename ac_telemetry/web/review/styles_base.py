@@ -219,10 +219,6 @@ REVIEW_BASE_CSS = """
       gap: 8px;
     }
 
-    @media (max-width: 820px) {
-      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .two-col { grid-template-columns: 1fr; }
-    }
     @media (max-width: 520px) {
       .topbar-inner { padding: 10px 12px; }
       .container { padding: 12px 12px 24px; }
@@ -230,9 +226,6 @@ REVIEW_BASE_CSS = """
       .ctrl { width: 100%; min-width: 0; }
       .seg-group { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .seg-btn { text-align: center; padding: 7px 6px; }
-      .session-item { flex-direction: column; align-items: flex-start; }
-      .session-item-notes { white-space: normal; }
       .hide-phone { display: none; }
-      .kpi-value { font-size: 18px; }
     }
 """.strip()
