@@ -29,7 +29,7 @@ from ac_telemetry.accuracy.score import (
     scoring_csv_laps,
 )
 from ac_telemetry.detect.readers import format_lap_time_ms
-from ac_telemetry.store.laps import LAP_FIELDS, LapStore, normalize_session_type
+from ac_telemetry.store.laps import LAP_FIELDS, LapStore
 
 logger = logging.getLogger(__name__)
 
@@ -430,22 +430,12 @@ def freeze_laps_written_once(
     return path, True
 
 
-def _session_type_from_ocr(ocr_chrono: list[dict[str, Any]]) -> str:
-    """Prefer the first non-empty OCR ``session_type``; default practice."""
-    for row in ocr_chrono:
-        raw = str(row.get("session_type") or "").strip()
-        if raw:
-            return normalize_session_type(raw)
-    return normalize_session_type(None)
-
-
 def build_gt_customer_rows(
     *,
     session_id: str,
     gt_laps: list[dict[str, Any]],
     ocr_chrono: list[dict[str, Any]],
     note: str = GT_CONFIRMED_NOTE,
-    session_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Contiguous GT sequence 1…N for customer ``laps.csv``.
 
@@ -453,20 +443,12 @@ def build_gt_customer_rows(
       when ``csv_lap_number`` maps; times always from GT (corrected).
     * **skip** — insert with blank ``recorded_at``; times from GT.
     * **double** — dropped (false extra write).
-
-    Every rewritten row keeps the session's ``session_type`` (``r`` / ``p``).
     """
     by_number: dict[str, dict[str, Any]] = {}
     for row in ocr_chrono:
         key = str(row.get("lap_number") or "").strip()
         if key and key not in by_number:
             by_number[key] = row
-
-    kind = (
-        normalize_session_type(session_type)
-        if session_type is not None and str(session_type).strip() != ""
-        else _session_type_from_ocr(ocr_chrono)
-    )
 
     out: list[dict[str, Any]] = []
     n = 0
@@ -488,7 +470,6 @@ def build_gt_customer_rows(
             out.append(
                 {
                     "session_id": session_id,
-                    "session_type": kind,
                     "lap_number": str(n),
                     "lap_time": text,
                     "lap_time_ms": ms_s,
@@ -508,7 +489,6 @@ def build_gt_customer_rows(
         out.append(
             {
                 "session_id": session_id,
-                "session_type": kind,
                 "lap_number": str(n),
                 "lap_time": text,
                 "lap_time_ms": ms_s,

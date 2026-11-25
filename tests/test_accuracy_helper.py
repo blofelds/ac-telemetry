@@ -103,8 +103,8 @@ def test_lap_store_note_column_migration(tmp_path: Path) -> None:
     assert rows[0].get("session_type", "") == ""
 
 
-def test_build_gt_customer_rows_preserves_session_type() -> None:
-    """Confirm rewrite stamps every customer lap with the session's r/p kind."""
+def test_build_gt_customer_rows_omits_session_type() -> None:
+    """Confirm rewrite builds contiguous GT rows without a per-lap session_type."""
     from ac_telemetry.accuracy.helper import build_gt_customer_rows
     from ac_telemetry.accuracy.score import load_gt_list
 
@@ -143,7 +143,7 @@ def test_build_gt_customer_rows_preserves_session_type() -> None:
         session_id="race1", gt_laps=gt, ocr_chrono=ocr, note=GT_CONFIRMED_NOTE
     )
     assert len(rows) == 3
-    assert all(r["session_type"] == "r" for r in rows)
+    assert all("session_type" not in r for r in rows)
     assert rows[1]["source"] == "gt_skip"
 
 
