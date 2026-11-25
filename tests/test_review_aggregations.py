@@ -56,11 +56,9 @@ def _make_lap_row(
     ms: int,
     *,
     note: str = "",
-    session_type: str = "",
 ) -> dict[str, object]:
     return {
         "session_id": sid,
-        "session_type": session_type,
         "lap_number": str(n),
         "lap_time": format_lap_ms(ms),
         "lap_time_ms": str(ms),
@@ -236,8 +234,8 @@ def test_build_review_payload_reads_existing_csv_stores_and_gt(
         [
             _make_lap_row("sess-csv-gt", 1, 105_000, note="gt_confirmed"),
             _make_lap_row("sess-csv-gt", 2, 95_000, note="gt_confirmed"),
-            _make_lap_row("sess-file-gt", 1, 95_800, session_type="r"),
-            _make_lap_row("sess-file-gt", 2, 95_400, session_type="r"),
+            _make_lap_row("sess-file-gt", 1, 95_800),
+            _make_lap_row("sess-file-gt", 2, 95_400),
         ],
     )
 

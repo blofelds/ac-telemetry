@@ -43,11 +43,9 @@ def _make_lap_row(
     ms: int,
     *,
     note: str = "",
-    session_type: str = "",
 ) -> dict[str, object]:
     return {
         "session_id": sid,
-        "session_type": session_type,
         "lap_number": str(n),
         "lap_time": format_lap_ms(ms),
         "lap_time_ms": str(ms),
@@ -121,19 +119,22 @@ def test_outlier_trimming_at_107_percent_boundary() -> None:
     assert raw["worst_ms"] == 107_001
 
 
-def test_legacy_blank_session_type_and_laps_csv_fallback() -> None:
-    eff, legacy = resolve_session_type({"session_type": ""}, [{"session_type": ""}])
+def test_resolve_session_type_uses_sessions_csv_only() -> None:
+    eff, legacy = resolve_session_type({"session_type": ""})
     assert eff == SESSION_TYPE_PRACTICE
     assert legacy is True
 
-    eff2, legacy2 = resolve_session_type(
-        {"session_type": ""}, [{"session_type": "r"}]
-    )
-    assert eff2 == SESSION_TYPE_RACE
-    assert legacy2 is False
-
     assert resolve_session_type({"session_type": "p"}) == (SESSION_TYPE_PRACTICE, False)
     assert resolve_session_type({"session_type": "r"}) == (SESSION_TYPE_RACE, False)
+
+    # Enriched session ignores any legacy session_type key on lap rows.
+    enriched = enrich_session(
+        _make_session_row("s-legacy", session_type=""),
+        [{**_make_lap_row("s-legacy", 1, 95_000), "session_type": "r"}],
+    )
+    assert enriched["effective_type"] == SESSION_TYPE_PRACTICE
+    assert enriched["is_legacy_blank_type"] is True
+    assert "session_type" not in enriched["laps"][0]
 
 
 def test_hide_zero_lap_sessions_and_notes_search() -> None:
