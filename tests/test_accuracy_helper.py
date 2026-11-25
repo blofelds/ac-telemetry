@@ -97,10 +97,56 @@ def test_lap_store_note_column_migration(tmp_path: Path) -> None:
     store.ensure()
     header = legacy.read_text(encoding="utf-8").splitlines()[0]
     assert header.split(",") == LAP_FIELDS
+    assert "session_type" not in header.split(",")
     rows = store.list_laps(session_id="s1", limit=10)
     assert rows[0]["lap_time"] == "1:07.717"
     assert rows[0].get("note", "") == ""
-    assert rows[0].get("session_type", "") == ""
+    assert "session_type" not in rows[0]
+
+
+def test_legacy_laps_written_with_session_type_loads_on_reconfirm(
+    tmp_path: Path,
+) -> None:
+    """Frozen legacy laps_written.csv with session_type still scores and stays intact."""
+    client, _store, lap_store, data_dir = _enabled_client(tmp_path)
+    created = client.post(
+        "/api/sessions",
+        json={"track": "Monza", "car": "Test", "race": True},
+    )
+    assert created.status_code == 201
+    sid = created.json()["session"]["session_id"]
+    client.post("/api/sessions/current/end")
+
+    sdir = session_dir(data_dir, sid, subdir="accuracy")
+    sdir.mkdir(parents=True)
+    frozen = laps_written_path(sdir)
+    legacy_written = (
+        "session_id,session_type,lap_number,lap_time,lap_time_ms,recorded_at,source,raw_text,note\n"
+        f"{sid},r,1,1:07.717,67717,2026-11-22T12:00:00+00:00,mock,1:07.717,\n"
+    )
+    frozen.write_text(legacy_written, encoding="utf-8")
+
+    resp = client.post(
+        f"/api/accuracy/sessions/{sid}/gt/confirm",
+        json={
+            "laps": [{"lap_time": "1:07.717", "csv_lap_number": 1, "mark": "normal"}],
+            "score": True,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["laps_written_frozen"] is False
+    assert body["score"]["csv_source"] == "laps_written.csv"
+    assert body["score"]["write_pct"] == 100.0
+    assert frozen.read_text(encoding="utf-8") == legacy_written
+
+    customer_header = (data_dir / "laps.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert customer_header.split(",") == LAP_FIELDS
+    assert "session_type" not in customer_header.split(",")
+    customer_rows = lap_store.list_laps(session_id=sid, limit=10)
+    assert len(customer_rows) == 1
+    assert "session_type" not in customer_rows[0]
+    assert customer_rows[0]["lap_time"] == "1:07.717"
 
 
 def test_build_gt_customer_rows_omits_session_type() -> None:

@@ -19,7 +19,7 @@ from ac_telemetry.api import create_app
 from ac_telemetry.capture import CaptureService
 from ac_telemetry.detect import DetectService
 from ac_telemetry.settings import get_settings, load_settings, normalize_backend
-from ac_telemetry.store import LapStore, SessionStore, normalize_session_type
+from ac_telemetry.store import LapStore, SessionStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,20 +60,13 @@ def build(
 
         accuracy = maybe_accuracy_session(settings.accuracy, settings.data_dir)
 
-    def record_lap(row: dict[str, Any]) -> dict[str, Any]:
-        """Stamp ``session_type`` from the open session onto every lap write."""
-        payload = dict(row)
-        session = store.current_session() or {}
-        payload["session_type"] = normalize_session_type(session.get("session_type"))
-        return lap_store.append_lap(payload)
-
     detect = DetectService(
         settings=settings,
         get_frame=capture.get_latest_frame,
         get_session_id=lambda: (
             (store.current_session() or {}).get("session_id")
         ),
-        record_lap=record_lap,
+        record_lap=lap_store.append_lap,
         on_metrics=metrics.observe_detect,
         get_capture_info=lambda: capture.stats.as_dict(),
         on_sample=None if accuracy is None else accuracy.on_sample,

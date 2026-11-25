@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 LAP_FIELDS = [
     "session_id",
-    "session_type",
     "lap_number",
     "lap_time",
     "lap_time_ms",
@@ -25,7 +24,7 @@ LAP_FIELDS = [
     "note",
 ]
 
-# Per-lap / per-session kind: race vs practice (not-race). Short CSV values.
+# Per-session kind: race vs practice (not-race). Short CSV values.
 SESSION_TYPE_RACE = "r"
 SESSION_TYPE_PRACTICE = "p"
 
@@ -69,7 +68,7 @@ class LapStore:
         self._migrate_header_if_needed()
 
     def _migrate_header_if_needed(self) -> None:
-        """Rewrite CSV when older headers lack newer columns (e.g. note)."""
+        """Rewrite CSV when headers differ from LAP_FIELDS (add or drop columns)."""
         with self.path.open(encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
             if reader.fieldnames is None:
