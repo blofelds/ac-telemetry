@@ -72,17 +72,16 @@ def _seed_sample_csv(data_dir: Path) -> None:
     with (data_dir / "laps.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=LAP_FIELDS)
         w.writeheader()
-        for sid, stype, n, ms, note in (
-            ("s_legacy", "", 1, 105_000, "out-lap, cold tyres"),
-            ("s_legacy", "", 2, 95_000, "gt_confirmed"),
-            ("s_legacy", "", 3, 95_400, "gt_confirmed"),
-            ("s_race", "r", 1, 95_800, "race start traffic"),
-            ("s_race", "r", 2, 95_500, ""),
+        for sid, n, ms, note in (
+            ("s_legacy", 1, 105_000, "out-lap, cold tyres"),
+            ("s_legacy", 2, 95_000, "gt_confirmed"),
+            ("s_legacy", 3, 95_400, "gt_confirmed"),
+            ("s_race", 1, 95_800, "race start traffic"),
+            ("s_race", 2, 95_500, ""),
         ):
             w.writerow(
                 {
                     "session_id": sid,
-                    "session_type": stype,
                     "lap_number": str(n),
                     "lap_time": f"{ms // 60000}:{(ms % 60000) // 1000:02d}.{ms % 1000:03d}",
                     "lap_time_ms": str(ms),

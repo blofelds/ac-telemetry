@@ -82,21 +82,12 @@ def compute_lap_stats(times_ms: Sequence[int]) -> dict[str, float | int | None]:
 
 def resolve_session_type(
     session_row: Mapping[str, Any],
-    lap_rows: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[str, bool]:
-    """Return ``(effective_type, is_legacy_blank_type)``.
+    """Return ``(effective_type, is_legacy_blank_type)`` from ``sessions.csv``.
 
-    Uses ``session_type`` from ``sessions.csv`` first, falling back to any
-    non-blank ``session_type`` on the session's ``laps.csv`` rows. Blank values
-    count as Practice (``p``) and are flagged as legacy.
+    Blank or unrecognized values count as Practice (``p``) and are flagged as legacy.
     """
     raw = str(session_row.get("session_type") or "").strip().lower()
-    if not raw:
-        for lap in lap_rows:
-            lap_raw = str(lap.get("session_type") or "").strip().lower()
-            if lap_raw:
-                raw = lap_raw
-                break
     if not raw:
         return SESSION_TYPE_PRACTICE, True
     if raw in (SESSION_TYPE_RACE, "race"):
@@ -161,7 +152,7 @@ def enrich_session(
     car = str(session_row.get("car") or "").strip() or MISSING_TEXT
     notes = str(session_row.get("notes") or "").strip()
     status = str(session_row.get("status") or "").strip()
-    effective_type, is_legacy_blank = resolve_session_type(session_row, lap_rows)
+    effective_type, is_legacy_blank = resolve_session_type(session_row)
     week_key, week_label = _week_bucket(started_at)
 
     parsed_laps: list[dict[str, Any]] = []
@@ -180,7 +171,6 @@ def enrich_session(
                 "note": lap_note,
                 "recorded_at": str(row.get("recorded_at") or "").strip(),
                 "source": str(row.get("source") or "").strip(),
-                "session_type": str(row.get("session_type") or "").strip(),
             }
         )
 

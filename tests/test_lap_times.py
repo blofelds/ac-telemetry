@@ -60,17 +60,18 @@ def test_lap_store_append_and_list(tmp_path: Path) -> None:
     assert laps[0]["lap_time"] == "1:42.100"
 
 
-def test_lap_csv_session_type_r_and_p(tmp_path: Path) -> None:
-    """Every lap row carries session_type ``r`` (race) or ``p`` (practice)."""
-    from ac_telemetry.store import LAP_FIELDS, normalize_session_type
+def test_lap_csv_header_excludes_session_type(tmp_path: Path) -> None:
+    """laps.csv omits session_type (sessions.csv is the single source of truth)."""
+    from ac_telemetry.store import LAP_FIELDS
 
     store = LapStore(tmp_path / "sessions")
     store.ensure()
     header = store.path.read_text(encoding="utf-8").splitlines()[0]
-    assert "session_type" in header.split(",")
+    assert "session_type" not in LAP_FIELDS
+    assert "session_type" not in header.split(",")
     assert header.split(",") == LAP_FIELDS
 
-    race = store.append_lap(
+    saved = store.append_lap(
         {
             "session_id": "race1",
             "session_type": "r",
@@ -81,25 +82,56 @@ def test_lap_csv_session_type_r_and_p(tmp_path: Path) -> None:
             "raw_text": "1:40.000",
         }
     )
-    practice = store.append_lap(
-        {
-            "session_id": "prac1",
-            "session_type": normalize_session_type(race=False),
-            "lap_number": 1,
-            "lap_time": "1:41.000",
-            "lap_time_ms": 101_000,
-            "source": "mock",
-            "raw_text": "1:41.000",
-        }
+    assert "session_type" not in saved
+    loaded = store.list_laps(session_id="race1")
+    assert len(loaded) == 1
+    assert "session_type" not in loaded[0]
+    assert loaded[0]["lap_time"] == "1:40.000"
+
+
+def test_lap_store_migrates_legacy_session_type_column(tmp_path: Path) -> None:
+    """Old laps.csv with session_type loads cleanly and migrates without data loss."""
+    from ac_telemetry.store import LAP_FIELDS
+
+    data_dir = tmp_path / "sessions"
+    data_dir.mkdir(parents=True)
+    legacy = data_dir / "laps.csv"
+    legacy.write_text(
+        "session_id,session_type,lap_number,lap_time,lap_time_ms,recorded_at,source,raw_text,note\n"
+        "race1,r,1,1:40.123,100123,2026-11-22T18:01:00+00:00,template,1:40.123,gt_confirmed\n"
+        "prac1,p,1,1:42.500,102500,2026-11-22T19:01:00+00:00,mock,1:42.500,\n"
+        "old1,,2,1:43.000,103000,2026-10-10T12:00:00+00:00,template,1:43.000,cold tyres\n",
+        encoding="utf-8",
     )
-    assert race["session_type"] == "r"
-    assert practice["session_type"] == "p"
-    assert store.list_laps(session_id="race1")[0]["session_type"] == "r"
-    assert store.list_laps(session_id="prac1")[0]["session_type"] == "p"
+
+    store = LapStore(data_dir)
+    laps = store.list_laps(limit=10)
+    assert len(laps) == 3
+
+    header = legacy.read_text(encoding="utf-8").splitlines()[0]
+    assert header.split(",") == LAP_FIELDS
+    assert "session_type" not in header.split(",")
+
+    by_sid = {row["session_id"]: row for row in laps}
+    assert all("session_type" not in row for row in laps)
+    assert by_sid["race1"] == {
+        "session_id": "race1",
+        "lap_number": "1",
+        "lap_time": "1:40.123",
+        "lap_time_ms": "100123",
+        "recorded_at": "2026-11-22T18:01:00+00:00",
+        "source": "template",
+        "raw_text": "1:40.123",
+        "note": "gt_confirmed",
+    }
+    assert by_sid["prac1"]["lap_time_ms"] == "102500"
+    assert by_sid["prac1"]["note"] == ""
+    assert by_sid["old1"]["lap_number"] == "2"
+    assert by_sid["old1"]["note"] == "cold tyres"
 
 
-def test_detect_lap_write_stamps_session_type_from_session(tmp_path: Path) -> None:
-    """Open race session → recorded laps get session_type ``r`` in laps.csv."""
+def test_detect_lap_write_keeps_session_type_on_session_only(tmp_path: Path) -> None:
+    """Open race session stores session_type on sessions.csv, not laps.csv."""
     client, detect = _client(tmp_path)
     created = client.post(
         "/api/sessions",
@@ -118,11 +150,11 @@ def test_detect_lap_write_stamps_session_type_from_session(tmp_path: Path) -> No
                 break
             time.sleep(0.2)
         assert laps, "expected at least one recorded lap"
-        assert laps[0]["session_type"] == "r"
+        assert "session_type" not in laps[0]
         csv_header = (tmp_path / "sessions" / "laps.csv").read_text(
             encoding="utf-8"
         ).splitlines()[0]
-        assert "session_type" in csv_header.split(",")
+        assert "session_type" not in csv_header.split(",")
     finally:
         detect.stop()
 
@@ -146,19 +178,11 @@ def _client(tmp_path: Path) -> tuple[TestClient, DetectService]:
     lap_store.ensure()
     capture = CaptureService(settings=settings)
 
-    def record_lap(row: dict[str, Any]) -> dict[str, Any]:
-        from ac_telemetry.store import normalize_session_type
-
-        payload = dict(row)
-        session = store.current_session() or {}
-        payload["session_type"] = normalize_session_type(session.get("session_type"))
-        return lap_store.append_lap(payload)
-
     detect = DetectService(
         settings=settings,
         get_frame=capture.get_latest_frame,
         get_session_id=lambda: (store.current_session() or {}).get("session_id"),
-        record_lap=record_lap,
+        record_lap=lap_store.append_lap,
     )
     app = create_app(
         settings, capture, store, lap_store=lap_store, detect=detect
